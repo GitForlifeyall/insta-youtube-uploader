@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Hub — Personal Metricool Planner & Analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="top-navbar">
+      <div class="nav-left">
+        <div class="logo-group">
+          <span class="logo-badge">⚡</span>
+          <span class="logo-text">Social Hub</span>
+          <span class="version-tag">PRO</span>
+        </div>
+
+        <!-- Brand Switcher Dropdown -->
+        <div class="brand-dropdown-wrapper">
+          <label for="brand-select" class="sr-only">Select Brand Workspace</label>
+          <div class="brand-pill" id="current-brand-pill">
+            <span class="brand-color-dot" id="brand-color-dot"></span>
+            <select id="brand-select" class="brand-select" title="Switch Active Brand"></select>
+          </div>
+          <button type="button" id="btn-add-brand" class="btn-icon" title="Add New Brand Workspace">➕</button>
+          <button type="button" id="btn-sync-env" class="btn-icon" title="Sync & Reload Credentials from .env">🔑</button>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <button type="button" class="tab-btn active" data-tab="folders">
+          <span class="tab-icon">📁</span> Brand Folders
+        </button>
+        <button type="button" class="tab-btn" data-tab="planner">
+          <span class="tab-icon">📅</span> Planner
+        </button>
+        <button type="button" class="tab-btn" data-tab="feed">
+          <span class="tab-icon">📱</span> Feed
+        </button>
+        <button type="button" class="tab-btn" data-tab="competitors">
+          <span class="tab-icon">🕵️</span> Competitors
+        </button>
+        <button type="button" class="tab-btn" data-tab="evergreen">
+          <span class="tab-icon">♻️</span> Evergreen
+        </button>
+        <button type="button" class="tab-btn" data-tab="queue">
+          <span class="tab-icon">⏳</span> Queue
+        </button>
+        <button type="button" class="tab-btn" data-tab="analytics">
+          <span class="tab-icon">📈</span> Analytics
+        </button>
+        <button type="button" class="tab-btn" data-tab="accounts">
+          <span class="tab-icon">🔐</span> Accounts
+        </button>
+      </nav>
+
+      <!-- Action Button -->
+      <div class="nav-right">
+        <button type="button" id="btn-open-all-folders" class="btn-subtle" title="Open media_queue parent folder in Windows File Explorer">
+          <span>📂 Open Folders</span>
+        </button>
+        <button type="button" id="btn-master-post-all" class="btn-master-post" title="Publish the next pending video/photo across ALL platforms for EVERY brand!">
+          <span class="btn-glow-dot"></span>
+          <span>🚀 Post All Brands</span>
+        </button>
+        <button type="button" id="btn-open-composer" class="btn-primary">
+          <span>✍️</span>
+          <span>Create Post</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- 0. BRAND FOLDERS / 1-CLICK AUTO-PUBLISHER TAB -->
+      <section id="view-folders" class="view-panel active">
+        <div class="folder-hero-card">
+          <div class="folder-hero-content">
+            <div class="hero-badge">⚡ 1-CLICK MULTI-BRAND PUBLISHER</div>
+            <h1 class="hero-title">Automated Folder Content Vault</h1>
+            <p class="hero-desc">Drop videos or photos into each brand's folder. Click the master button to publish the next item across all connected channels (Instagram, Facebook, Threads, YouTube Shorts) simultaneously.</p>
+            <div class="hero-kpi-row">
+              <div class="hero-kpi-pill">
+                <span class="kpi-icon">📁</span>
+                <div>
+                  <div class="kpi-val" id="stat-folder-brands-count">0</div>
+                  <div class="kpi-title">Active Brands</div>
+                </div>
+              </div>
+              <div class="hero-kpi-pill">
+                <span class="kpi-icon">⏳</span>
+                <div>
+                  <div class="kpi-val" id="stat-folder-queue-total">0</div>
+                  <div class="kpi-title">Queued Items</div>
+                </div>
+              </div>
+              <div class="hero-kpi-pill">
+                <span class="kpi-icon">✅</span>
+                <div>
+                  <div class="kpi-val" id="stat-folder-posted-total">0</div>
+                  <div class="kpi-title">Posted &amp; Archived</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="folder-hero-actions">
+            <button type="button" id="btn-hero-post-all" class="btn-hero-broadcast">
+              <span class="rocket-anim">🚀</span>
+              <div class="btn-text-group">
+                <span class="btn-main-text">Post Next for All Brands</span>
+                <span class="btn-sub-text">Instagram • Facebook • Threads • YouTube</span>
+              </div>
+            </button>
+            <div class="hero-secondary-btns">
+              <button type="button" id="btn-refresh-folders" class="btn-subtle" title="Rescan media folders">🔄 Refresh Queue</button>
+              <button type="button" id="btn-hero-open-folders" class="btn-subtle" title="Open media_queue in Windows Explorer">📂 Open Folder in Explorer</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="folder-grid-header">
+          <h2 class="section-title">Brand Content Queues</h2>
+          <span class="section-subtitle">Items are posted in first-in first-out (FIFO) sequence and automatically moved to <code>posted/</code></span>
+        </div>
+
+        <!-- Dynamic Brand Folder Cards Grid -->
+        <div id="brand-folders-grid" class="brand-folders-grid">
+          <!-- Dynamically populated brand folder cards -->
+        </div>
+      </section>
+
+      <!-- 1. PLANNER / CALENDAR TAB -->
+      <section id="view-planner" class="view-panel">
+        <!-- Calendar Toolbar -->
+        <div class="calendar-toolbar">
+          <div class="calendar-nav-group">
+            <button type="button" id="cal-prev-btn" class="btn-subtle" title="Previous Month">‹</button>
+            <button type="button" id="cal-today-btn" class="btn-subtle">Today</button>
+            <button type="button" id="cal-next-btn" class="btn-subtle" title="Next Month">›</button>
+            <h2 id="calendar-month-title" class="calendar-title">Month Year</h2>
+          </div>
+
+          <!-- Best Times Heatmap Toggle & Stats -->
+          <div class="calendar-actions-group">
+            <button type="button" id="btn-toggle-best-times" class="btn-best-times" title="Highlight optimal peak posting windows">
+              <span class="fire-icon">🔥</span>
+              <span>Best Times</span>
+              <span class="status-indicator-dot" id="best-times-dot"></span>
+            </button>
+            <div class="cal-stat-pill"><span class="dot-scheduled"></span> <span id="stat-scheduled-count">0</span> Scheduled</div>
+            <div class="cal-stat-pill"><span class="dot-published"></span> <span id="stat-published-count">0</span> Published</div>
+          </div>
+        </div>
+
+        <!-- 7-Column Day Header & Grid -->
+        <div class="calendar-grid-container">
+          <div class="calendar-weekdays-header">
+            <div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div><div>SUN</div>
+          </div>
+          <div id="calendar-days-grid" class="calendar-days-grid">
+            <!-- Dynamically populated day cells -->
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. INSTAGRAM FEED PREVIEW TAB -->
+      <section id="view-feed" class="view-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Instagram Visual Feed Grid</h2>
+            <p class="panel-desc">Visual planner showing how scheduled reels and published posts harmonize on your 3-column feed.</p>
+          </div>
+          <div class="feed-header-actions">
+            <button type="button" id="btn-feed-refresh" class="btn-secondary" title="Fetch live Instagram profile & published reels">🔄 Refresh Live Feed</button>
+            <button type="button" id="btn-feed-add-post" class="btn-primary">➕ Schedule into Feed</button>
+          </div>
+        </div>
+
+        <div class="feed-preview-layout">
+          <!-- Real-Time Instagram Profile Header -->
+          <div class="feed-profile-card">
+            <div class="feed-avatar-wrap">
+              <div class="feed-avatar-ring">
+                <div class="feed-avatar-inner" id="feed-avatar-container">
+                  <span id="feed-avatar-initials">SH</span>
+                  <img id="feed-avatar-img" src="" alt="Profile" style="display:none; width:100%; height:100%; object-fit:cover; border-radius:50%;">
+                </div>
+              </div>
+            </div>
+            <div class="feed-profile-meta">
+              <div class="feed-profile-handle-row">
+                <span class="feed-handle" id="feed-profile-handle">@loading...</span>
+                <span class="verified-badge" id="feed-verified-badge" style="display:none;" title="Verified Account">✓</span>
+                <span class="badge-brand-pill" id="feed-brand-badge">Brand</span>
+                <span class="badge-live-dot" id="feed-live-status-pill">● Checking Live...</span>
+              </div>
+              <div class="feed-profile-stats">
+                <span id="feed-stat-posts"><strong id="feed-val-posts">--</strong> posts</span>
+                <span id="feed-stat-followers"><strong id="feed-val-followers">--</strong> followers</span>
+                <span id="feed-stat-following"><strong id="feed-val-following">--</strong> following</span>
+              </div>
+              <div class="feed-profile-bio" id="feed-profile-bio">
+                Connecting to live Instagram account...
+              </div>
+            </div>
+          </div>
+
+          <!-- 3-Column Profile Feed Grid -->
+          <div class="feed-grid-wrapper">
+            <div class="feed-grid-tabs">
+              <button type="button" class="feed-tab-btn active">▦ All Grid</button>
+              <button type="button" class="feed-tab-btn">🎬 Reels</button>
+            </div>
+            <div id="feed-tiles-grid" class="feed-tiles-grid">
+              <!-- Dynamically populated 3-column items -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. COMPETITOR SPY & BENCHMARKING TAB -->
+      <section id="view-competitors" class="view-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Competitor Radar &amp; Benchmarking</h2>
+            <p class="panel-desc">Track competitor channels and creators without logging in. Compare follower counts, publishing pace, and average reach.</p>
+          </div>
+          <div class="header-actions-row">
+            <button type="button" id="btn-refresh-competitors" class="btn-refresh">
+              <span class="icon">🔄</span> Refresh Competitor Stats
+            </button>
+            <button type="button" id="btn-open-add-competitor" class="btn-primary">
+              <span>➕ Add Competitor</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="competitor-cards-container" class="competitor-grid">
+          <!-- Dynamically populated competitor cards -->
+        </div>
+      </section>
+
+      <!-- 4. EVERGREEN & BULK SCHEDULING TAB -->
+      <section id="view-evergreen" class="view-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Evergreen Recycling &amp; Autolists</h2>
+            <p class="panel-desc">Maintain continuous publishing momentum. Auto-fill calendar gaps using your evergreen content library.</p>
+          </div>
+          <div class="header-actions-row">
+            <button type="button" id="btn-trigger-autofill" class="btn-secondary" title="Scan next 7 days and fill empty slots with evergreen reels">
+              <span>⚡ Auto-Fill Calendar Gaps (7 Days)</span>
+            </button>
+            <button type="button" id="btn-open-bulk-2" class="btn-primary">
+              <span>🚀 Bulk Batch Scheduler</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="evergreen-container">
+          <div class="evergreen-stats-strip">
+            <div class="evergreen-kpi">
+              <span class="kpi-num" id="evergreen-active-count">0</span>
+              <span class="kpi-lbl">Active Evergreen Posts</span>
+            </div>
+            <div class="evergreen-kpi">
+              <span class="kpi-num" id="evergreen-recycle-count">0</span>
+              <span class="kpi-lbl">Total Recycled Dispatches</span>
+            </div>
+          </div>
+
+          <div class="evergreen-list-wrapper">
+            <div class="table-card-header">
+              <h3 class="card-heading">Evergreen Content Pool</h3>
+              <span class="badge-subtle">Recycles into peak slots</span>
+            </div>
+            <div id="evergreen-posts-list" class="evergreen-cards-grid">
+              <!-- Dynamically populated evergreen cards -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. SCHEDULED QUEUE TAB -->
+      <section id="view-queue" class="view-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Scheduled Posts Queue</h2>
+            <p class="panel-desc">All upcoming posts across platforms with publish dispatch status.</p>
+          </div>
+        </div>
+        <div id="queue-list" class="queue-list-grid">
+          <!-- Dynamically populated list -->
+        </div>
+      </section>
+
+      <!-- 6. ANALYTICS TAB -->
+      <section id="view-analytics" class="view-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Public Analytics &amp; Performance</h2>
+            <p class="panel-desc">Zero-login tracking for public views, audience engagement, and post leaderboards.</p>
+          </div>
+          <div class="analytics-header-actions">
+            <button type="button" id="btn-refresh-analytics" class="btn-refresh" title="Run scrapers across all links now">
+              <span class="icon">🔄</span> Refresh Public Metrics
+            </button>
+            <button type="button" id="btn-track-url" class="btn-secondary">🔗 Track New Public URL</button>
+          </div>
+        </div>
+
+        <!-- Metric KPI Cards -->
+        <div class="analytics-kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Total Views</div>
+            <div class="kpi-value" id="kpi-total-views">0</div>
+            <div class="kpi-sub">Across all public content</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Total Likes</div>
+            <div class="kpi-value" id="kpi-total-likes">0</div>
+            <div class="kpi-sub">Audience appreciation</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Comments &amp; Replies</div>
+            <div class="kpi-value" id="kpi-total-comments">0</div>
+            <div class="kpi-sub">Direct engagement</div>
+          </div>
+          <div class="kpi-card kpi-card-highlight">
+            <div class="kpi-label">Avg Engagement Rate</div>
+            <div class="kpi-value highlight-val" id="kpi-engagement-rate">0.0%</div>
+            <div class="kpi-sub">Formula: (Likes+Comments)/Views</div>
+          </div>
+        </div>
+
+        <!-- Platform Breakdown Card -->
+        <div class="analytics-breakdown-card">
+          <h3 class="card-heading">Platform Views Distribution</h3>
+          <div class="platform-bar-grid">
+            <div class="platform-row">
+              <span class="plat-name">📺 YouTube Shorts</span>
+              <span class="plat-count" id="plat-views-yt">0 views</span>
+            </div>
+            <div class="platform-row">
+              <span class="plat-name">📸 Instagram Reels</span>
+              <span class="plat-count" id="plat-views-ig">0 views</span>
+            </div>
+            <div class="platform-row">
+              <span class="plat-name">🧵 Threads</span>
+              <span class="plat-count" id="plat-views-threads">0 views</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Content Performance Table -->
+        <div class="analytics-table-card">
+          <div class="table-card-header">
+            <h3 class="card-heading">Top Performing Content Leaderboard</h3>
+            <span class="badge-subtle">Ranked by Views</span>
+          </div>
+          <div class="table-responsive">
+            <table class="metricool-table">
+              <thead>
+                <tr>
+                  <th>Title / Post</th>
+                  <th>Platform</th>
+                  <th>Views</th>
+                  <th>Likes</th>
+                  <th>Comments</th>
+                  <th>Engagement</th>
+                  <th>Link</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboard-table-body">
+                <tr><td colspan="7" class="empty-table-msg">No tracked links recorded yet. Track a YouTube or Instagram post above!</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. CONNECTED & VERIFIED ACCOUNTS TAB -->
+      <section id="view-accounts" class="view-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Connected &amp; Verified Accounts Hub</h2>
+            <p class="panel-desc">Multi-platform authentication manager. Inspect active sessions, view live status, and monitor verified credentials.</p>
+          </div>
+          <div class="accounts-header-actions">
+            <button type="button" id="btn-accounts-refresh" class="btn-secondary">
+              <span>🔄</span> Refresh Status
+            </button>
+            <button type="button" id="btn-accounts-sync-env" class="btn-primary">
+              <span>🔑</span> Sync from .env
+            </button>
+          </div>
+        </div>
+
+        <!-- Accounts Stat Summary Bar -->
+        <div class="accounts-summary-grid">
+          <div class="acc-summary-card">
+            <div class="acc-summary-icon">🏢</div>
+            <div>
+              <div class="acc-summary-num" id="acc-sum-brands">0</div>
+              <div class="acc-summary-lbl">Active Brands</div>
+            </div>
+          </div>
+          <div class="acc-summary-card highlight-card">
+            <div class="acc-summary-icon">✅</div>
+            <div>
+              <div class="acc-summary-num" id="acc-sum-verified">0</div>
+              <div class="acc-summary-lbl">Verified Logged-In Accounts</div>
+            </div>
+          </div>
+          <div class="acc-summary-card">
+            <div class="acc-summary-icon">⚠️</div>
+            <div>
+              <div class="acc-summary-num" id="acc-sum-pending">0</div>
+              <div class="acc-summary-lbl">Needs Attention / Offline</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter & Control Toolbar -->
+        <div class="accounts-filter-toolbar">
+          <div class="toggle-control-group">
+            <label class="switch-label" for="chk-verified-only">
+              <input type="checkbox" id="chk-verified-only" checked>
+              <span class="switch-slider"></span>
+              <span class="switch-text"><strong>Show only verified logged-in accounts</strong></span>
+            </label>
+            <span class="badge-filter-status" id="accounts-filter-indicator">Filtered: Showing 100% verified</span>
+          </div>
+          <div class="platform-filter-chips" id="accounts-platform-filters">
+            <button type="button" class="filter-chip active" data-filter="all">All Platforms</button>
+            <button type="button" class="filter-chip" data-filter="instagram">📸 Instagram</button>
+            <button type="button" class="filter-chip" data-filter="threads">🧵 Threads</button>
+          </div>
+        </div>
+
+        <!-- Accounts Grid -->
+        <div id="verified-accounts-grid" class="accounts-grid">
+          <div class="empty-state-card">Loading verified accounts...</div>
+        </div>
+
+        <!-- Unverified / Disconnected Section (Shown when toggle is OFF) -->
+        <div id="disconnected-accounts-section" class="disconnected-section" style="display:none;">
+          <h3 class="disconnected-heading">⚠️ Accounts Requiring Attention / Re-Login</h3>
+          <div id="disconnected-accounts-grid" class="accounts-grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Modal: Universal Post Composer -->
+    <div id="composer-modal" class="modal-backdrop" style="display: none;">
+      <div class="composer-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">Schedule Post</h3>
+          <button type="button" id="btn-close-composer" class="btn-close">✕</button>
+        </div>
+
+        <div class="composer-body">
+          <!-- Left: Inputs -->
+          <div class="composer-form">
+            <!-- Target Platforms -->
+            <div class="form-group">
+              <label class="form-label">Target Social Platforms</label>
+              <div class="platform-select-chips">
+                <label class="chip-label">
+                  <input type="checkbox" id="chk-platform-ig" value="instagram" checked>
+                  <span class="chip-pill">📸 Instagram</span>
+                </label>
+                <label class="chip-label">
+                  <input type="checkbox" id="chk-platform-fb" value="facebook" checked>
+                  <span class="chip-pill">📘 Facebook</span>
+                </label>
+                <label class="chip-label">
+                  <input type="checkbox" id="chk-platform-threads" value="threads">
+                  <span class="chip-pill">🧵 Threads</span>
+                </label>
+                <label class="chip-label">
+                  <input type="checkbox" id="chk-platform-yt" value="youtube">
+                  <span class="chip-pill">▶️ YouTube</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Media Selector -->
+            <div class="form-group">
+              <label class="form-label">Attach Media from new-lyrics-2</label>
+              <select id="composer-media-select" class="form-select">
+                <option value="">(Select a generated video or carousel)</option>
+              </select>
+            </div>
+
+            <!-- Caption -->
+            <div class="form-group">
+              <div class="label-row">
+                <label class="form-label" for="composer-caption">Caption &amp; Hashtags</label>
+                <span class="char-count" id="caption-count">0 / 2200</span>
+              </div>
+              <textarea id="composer-caption" class="form-textarea" rows="3" placeholder="When lyrics feel too personal... 🤌🤍 #lyrics #music"></textarea>
+            </div>
+
+            <!-- Schedule First Comment -->
+            <div class="form-group">
+              <div class="label-row">
+                <label class="form-label" for="composer-first-comment">💬 Schedule First Comment (Hashtags / Links)</label>
+                <span class="char-sub">Auto-posted upon publish</span>
+              </div>
+              <textarea id="composer-first-comment" class="form-textarea mini-textarea" rows="2" placeholder="#hindilyrics #lofi #aesthetic #songcredits"></textarea>
+            </div>
+
+            <!-- Add to Evergreen Pool Checkbox -->
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="chk-add-evergreen">
+                <span>♻️ Save to Evergreen Library (Auto-recycles into empty slots later)</span>
+              </label>
+            </div>
+
+            <!-- Best Times Recommendation Chips -->
+            <div class="form-group">
+              <label class="form-label">⚡ Best Times to Post (Peak Audience Windows)</label>
+              <div class="best-times-chips-row" id="composer-best-times-chips">
+                <button type="button" class="best-time-chip" data-time="19:30" data-score="96">
+                  <span class="chip-fire">🔥</span>
+                  <span class="chip-time">7:30 PM</span>
+                  <span class="chip-badge">96% Peak</span>
+                </button>
+                <button type="button" class="best-time-chip" data-time="13:00" data-score="88">
+                  <span class="chip-fire">⚡</span>
+                  <span class="chip-time">1:00 PM</span>
+                  <span class="chip-badge">88% Lunch</span>
+                </button>
+                <button type="button" class="best-time-chip" data-time="21:00" data-score="85">
+                  <span class="chip-fire">🌙</span>
+                  <span class="chip-time">9:00 PM</span>
+                  <span class="chip-badge">85% Evening</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Schedule Date & Time -->
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="composer-date">Schedule Date</label>
+                <input type="date" id="composer-date" class="form-input">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="composer-time">Schedule Time</label>
+                <input type="time" id="composer-time" class="form-input">
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Live Mock Preview -->
+          <div class="composer-preview">
+            <div class="preview-header-bar">
+              <div class="preview-header-tag">Live Social Preview</div>
+              <div class="preview-platform-tabs">
+                <button type="button" class="prev-tab-btn active" data-preview-type="instagram">📸 Reels</button>
+                <button type="button" class="prev-tab-btn" data-preview-type="youtube">▶️ Shorts</button>
+                <button type="button" class="prev-tab-btn" data-preview-type="threads">🧵 Thread</button>
+              </div>
+            </div>
+
+            <div class="phone-mockup">
+              <div class="phone-screen" id="phone-preview-screen">
+                <div class="preview-placeholder-text">Select media above to see instant preview</div>
+              </div>
+              <div class="preview-caption-box" id="phone-caption-preview">Your caption will appear here...</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="btn-cancel-composer" class="btn-subtle">Cancel</button>
+          <button type="button" id="btn-publish-now" class="btn-secondary">⚡ Publish Now</button>
+          <button type="button" id="btn-submit-post" class="btn-primary">🗓️ Schedule to Queue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Bulk Batch Scheduler -->
+    <div id="bulk-modal" class="modal-backdrop" style="display: none;">
+      <div class="composer-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">⚡ Bulk Batch Scheduler (Auto-Distribute to Peak Times)</h3>
+          <button type="button" id="btn-close-bulk" class="btn-close">✕</button>
+        </div>
+        <div class="modal-body-padding">
+          <p style="color:#8b949e; font-size:13px; margin-bottom:16px;">
+            Select multiple rendered lyric videos below. The engine will automatically spread them across upcoming days at the highest audience activity peak times!
+          </p>
+          <div class="form-group">
+            <label class="form-label">Select Media Files</label>
+            <div id="bulk-media-checkboxes" class="bulk-media-grid">
+              <!-- Checkboxes populated via app.js -->
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="bulk-caption-template">Caption Template (Use <code>{filename}</code> for auto-title)</label>
+            <textarea id="bulk-caption-template" class="form-textarea" rows="2">When lyrics hit too deep... 🤌🤍 {filename} #lyrics #music #hindilofi</textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="bulk-first-comment">💬 First Comment Template</label>
+            <input type="text" id="bulk-first-comment" class="form-input" value="#lyrics #lofi #aesthetic #chords">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="bulk-start-date">Start Date</label>
+              <input type="date" id="bulk-start-date" class="form-input">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="bulk-interval">Interval (Days between posts)</label>
+              <input type="number" id="bulk-interval" class="form-input" value="1" min="1" max="7">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-cancel-bulk" class="btn-subtle">Cancel</button>
+          <button type="button" id="btn-submit-bulk" class="btn-primary">🚀 Auto-Distribute &amp; Schedule</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: CSV Import -->
+    <div id="csv-import-modal" class="modal-backdrop csv-import-modal" style="display: none;">
+      <div class="csv-import-dialog" role="dialog" aria-modal="true" aria-labelledby="csv-import-title">
+        <div class="modal-header csv-modal-header">
+          <div>
+            <h3 id="csv-import-title" class="modal-title">Import posts from CSV file</h3>
+            <p class="csv-modal-subtitle">Upload a Metricool or Social Hub CSV and verify every post before importing.</p>
+          </div>
+          <button type="button" id="btn-close-csv-modal" class="btn-close" title="Close CSV import">&#10005;</button>
+        </div>
+
+        <div id="csv-upload-step" class="csv-step-panel">
+          <div id="csv-upload-dropzone" class="csv-upload-dropzone" tabindex="0" role="button" aria-label="Choose a CSV file">
+            <div class="csv-upload-icon">&#128196;</div>
+            <h4>Drop your CSV file here</h4>
+            <p>or choose a file from your computer</p>
+            <button type="button" id="btn-csv-choose-file" class="btn-primary">Choose CSV file</button>
+            <input type="file" id="csv-file-input" accept=".csv,text/csv" hidden>
+          </div>
+          <div class="csv-template-links">
+            <span>Download a template:</span>
+            <a href="/api/posts/templates/metricool" download>Metricool CSV</a>
+            <a href="/api/posts/templates/custom" download>Social Hub Custom CSV</a>
+          </div>
+          <div id="csv-upload-error" class="csv-inline-error" role="alert" hidden></div>
+        </div>
+
+        <div id="csv-preview-step" class="csv-step-panel" hidden>
+          <div class="csv-toolbar">
+            <div>
+              <span class="csv-step-label">Step 2</span>
+              <strong>Verify imported posts</strong>
+            </div>
+            <div class="csv-format-selects">
+              <label for="csv-date-format">Date format
+                <select id="csv-date-format" class="form-select">
+                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                </select>
+              </label>
+              <label for="csv-time-format">Time format
+                <select id="csv-time-format" class="form-select">
+                  <option value="24h">24-hour</option>
+                  <option value="12h">12-hour</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div id="csv-alerts" class="csv-alerts" aria-live="polite"></div>
+          <div class="csv-preview-summary" id="csv-preview-summary"></div>
+          <div id="csv-posts-list" class="csv-posts-list"></div>
+        </div>
+
+        <div class="modal-footer csv-modal-footer">
+          <button type="button" id="btn-csv-back" class="btn-subtle" hidden>Back</button>
+          <button type="button" id="btn-csv-cancel" class="btn-subtle">Cancel</button>
+          <button type="button" id="btn-csv-execute-import" class="btn-primary" disabled>Import 0 posts</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Add Competitor -->
+    <div id="competitor-modal" class="modal-backdrop" style="display: none;">
+      <div class="mini-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">Track Competitor Channel / Profile</h3>
+          <button type="button" id="btn-close-competitor" class="btn-close">✕</button>
+        </div>
+        <div class="form-group" style="margin-top: 14px;">
+          <label class="form-label" for="comp-platform-select">Platform</label>
+          <select id="comp-platform-select" class="form-select">
+            <option value="youtube">YouTube Channel (@handle)</option>
+            <option value="instagram">Instagram Account (@handle)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="comp-handle-input">Account Handle or URL</label>
+          <input type="text" id="comp-handle-input" class="form-input" placeholder="e.g. @tseries or @lofigirl">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="comp-name-input">Display Name / Label (Optional)</label>
+          <input type="text" id="comp-name-input" class="form-input" placeholder="e.g. T-Series Lo-Fi">
+        </div>
+        <div class="modal-footer" style="margin-top: 20px;">
+          <button type="button" id="btn-cancel-competitor" class="btn-subtle">Cancel</button>
+          <button type="button" id="btn-save-competitor" class="btn-primary">Track Competitor</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Add Brand -->
+    <div id="brand-modal" class="modal-backdrop" style="display: none;">
+      <div class="mini-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">New Brand Workspace</h3>
+          <button type="button" id="btn-close-brand" class="btn-close">✕</button>
+        </div>
+        <div class="form-group" style="margin-top: 14px;">
+          <label class="form-label" for="new-brand-name">Brand Name</label>
+          <input type="text" id="new-brand-name" class="form-input" placeholder="e.g. Hindi Lo-Fi Records">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="new-brand-color">Brand Color Badge</label>
+          <input type="color" id="new-brand-color" class="form-color-input" value="#e7ff56">
+        </div>
+        <div class="modal-footer" style="margin-top: 20px;">
+          <button type="button" id="btn-cancel-brand" class="btn-subtle">Cancel</button>
+          <button type="button" id="btn-save-brand" class="btn-primary">Create Brand</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Track Public URL -->
+    <div id="track-url-modal" class="modal-backdrop" style="display: none;">
+      <div class="mini-dialog">
+        <div class="modal-header">
+          <h3 class="modal-title">Track Public Social Media URL</h3>
+          <button type="button" id="btn-close-track-modal" class="btn-close">✕</button>
+        </div>
+        <div class="form-group" style="margin-top: 14px;">
+          <label class="form-label" for="track-url-input">Video or Post URL</label>
+          <input type="url" id="track-url-input" class="form-input" placeholder="https://youtube.com/shorts/... or https://instagram.com/reel/...">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="track-platform-select">Platform</label>
+          <select id="track-platform-select" class="form-select">
+            <option value="youtube">YouTube Shorts / Video</option>
+            <option value="instagram">Instagram Reel / Post</option>
+            <option value="threads">Threads Post</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="track-title-input">Post Title / Song Name (Optional)</label>
+          <input type="text" id="track-title-input" class="form-input" placeholder="e.g. Channa Mereya Lo-Fi Hook">
+        </div>
+        <div class="modal-footer" style="margin-top: 20px;">
+          <button type="button" id="btn-cancel-track-modal" class="btn-subtle">Cancel</button>
+          <button type="button" id="btn-save-track-url" class="btn-primary">Track &amp; Fetch Stats</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Live Broadcast Progress -->
+    <div id="broadcast-modal" class="modal-backdrop" style="display: none;">
+      <div class="broadcast-dialog">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="broadcast-pulse-dot"></span>
+            <h3 class="modal-title" id="broadcast-modal-title">Publishing Across Brands...</h3>
+          </div>
+          <button type="button" id="btn-close-broadcast" class="btn-close" disabled>✕</button>
+        </div>
+        
+        <div class="broadcast-body">
+          <div class="broadcast-summary-banner" id="broadcast-summary-banner">
+            <div class="broadcast-spinner" id="broadcast-spinner"></div>
+            <div id="broadcast-status-msg">Dispatching media items to connected platforms...</div>
+          </div>
+
+          <div class="broadcast-brands-list" id="broadcast-brands-list">
+            <!-- Dynamically populated live status items per brand -->
+          </div>
+
+          <div class="broadcast-log-container">
+            <div class="log-header">Live Publishing Log</div>
+            <pre class="broadcast-log" id="broadcast-log-output">Initializing publishing pipeline...</pre>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="btn-done-broadcast" class="btn-primary" style="display: none;">Done &amp; Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast-popup"></div>
+  </div>
+
+  <script src="app.js?v=5"></script>
+</body>
+</html>

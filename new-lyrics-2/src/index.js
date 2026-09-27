@@ -1,0 +1,1232 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { spawn, spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const LYRICS_DIR = path.join(__dirname, '../lyrics');
+const ROOT_DIR = path.join(__dirname, '..');
+const VIDEO_INPUT_DIR = path.join(ROOT_DIR, 'videos', 'input');
+const VIDEO_OUTPUT_DIR = path.join(ROOT_DIR, 'videos', 'output');
+const CAROUSEL_OUTPUT_DIR = path.join(VIDEO_OUTPUT_DIR, 'carousels');
+
+let cachedVideoEncoder = null;
+
+function getBestVideoEncoder() {
+  if (cachedVideoEncoder) return cachedVideoEncoder;
+
+  const fallback = { name: 'libx264', flags: ['-preset', 'ultrafast'] };
+  const flags = {
+    h264_nvenc: ['-preset', 'p1', '-cq', '19'],
+    h264_qsv: ['-preset', 'veryfast'],
+    h264_amf: ['-quality', 'speed', '-rc', 'cqp', '-qp_i', '19', '-qp_p', '19'],
+    h264_videotoolbox: [],
+    h264_mf: ['-rate_control', 'cbr', '-b:v', '3M'],
+    libx264: fallback.flags
+  };
+  const candidates = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_videotoolbox', 'h264_mf', 'libx264'];
+
+  try {
+    const result = spawnSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' });
+    const output = `${result.stdout || ''}${result.stderr || ''}`;
+    const available = candidates.filter((name) => new RegExp(`\\b${name}\\b`).test(output));
+    const selected = available.find((name) => {
+      const probe = spawnSync('ffmpeg', [
+        '-y', '-f', 'lavfi', '-i', 'color=c=black:s=320x180:r=30:d=0.1',
+        '-c:v', name, ...flags[name], '-f', 'null', '-'
+      ], { encoding: 'utf8', stdio: 'ignore' });
+      return probe.status === 0;
+    });
+    cachedVideoEncoder = selected ? { name: selected, flags: flags[selected] } : fallback;
+  } catch {
+    cachedVideoEncoder = fallback;
+  }
+  return cachedVideoEncoder;
+}
+
+
+// Ensure directories exist
+if (!fs.existsSync(LYRICS_DIR)) fs.mkdirSync(LYRICS_DIR, { recursive: true });
+if (!fs.existsSync(VIDEO_INPUT_DIR)) fs.mkdirSync(VIDEO_INPUT_DIR, { recursive: true });
+if (!fs.existsSync(VIDEO_OUTPUT_DIR)) fs.mkdirSync(VIDEO_OUTPUT_DIR, { recursive: true });
+if (!fs.existsSync(CAROUSEL_OUTPUT_DIR)) fs.mkdirSync(CAROUSEL_OUTPUT_DIR, { recursive: true });
+
+export function getPythonExecutable() {
+  if (process.env.PYTHON_PATH) return process.env.PYTHON_PATH;
+  const rootDir = path.join(__dirname, '..');
+  const isWindows = process.platform === 'win32';
+  const venv310Py = path.join(rootDir, '.venv310', isWindows ? 'Scripts/python.exe' : 'bin/python');
+  if (fs.existsSync(venv310Py)) return venv310Py;
+  const venvPy = path.join(rootDir, '.venv', isWindows ? 'Scripts/python.exe' : 'bin/python');
+  if (fs.existsSync(venvPy)) return venvPy;
+  return 'python';
+}
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const USER_AGENT = 'LyricalVideo/1.0 (https://github.com/GitForlifeyall/lyricalvideo)';
+
+// In-memory store for active session
+let currentSongSession = null;
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Serve static frontend assets and directories
+app.use(express.static(path.join(__dirname, '../public')));
+app.use('/lyrics', express.static(LYRICS_DIR));
+app.use('/videos', express.static(VIDEO_OUTPUT_DIR));
+app.use('/carousel-output', express.static(CAROUSEL_OUTPUT_DIR));
+app.use('/stickers', express.static(path.join(ROOT_DIR, 'stickers')));
+app.use('/templates', express.static(path.join(ROOT_DIR, 'templates')));
+
+app.get('/api/carousel-lyrics', async (req, res) => {
+  const query = String(req.query.q || '').trim();
+  if (!query) return res.status(400).json({ error: 'Spotify link or song query is required.' });
+
+  try {
+    const lookupScript = path.join(ROOT_DIR, 'services', 'carousel', 'lookup.py');
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(getPythonExecutable(), [lookupScript, query], { cwd: ROOT_DIR });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+    const lines = String(result.stdout || '').trim().split(/\r?\n/).filter(Boolean);
+    const payload = lines.length ? JSON.parse(lines[lines.length - 1]) : {};
+    if (result.code !== 0 || payload.error) {
+      return res.status(400).json({ error: payload.error || 'Could not resolve lyrics.', detail: result.stderr });
+    }
+    if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
+      return res.status(404).json({ error: 'No synced lyrics were found for this track.' });
+    }
+    return res.json(payload);
+  } catch (error) {
+    console.error('Carousel lyric lookup error:', error);
+    return res.status(500).json({ error: 'Could not fetch carousel lyrics.', detail: error.message });
+  }
+});
+
+app.get('/api/proxy-image', async (req, res) => {
+  const imageUrl = String(req.query.url || '').trim();
+  if (!imageUrl) return res.status(400).send('Image URL required');
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) return res.status(response.status).send('Failed to fetch image');
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=86400');
+    const arrayBuffer = await response.arrayBuffer();
+    return res.send(Buffer.from(arrayBuffer));
+  } catch (err) {
+    return res.status(500).send(err.message);
+  }
+});
+
+/**
+ * GET /api/nokia-stickers
+ * List available sticker filenames from stickers/ directory.
+ */
+app.get('/api/nokia-stickers', async (req, res) => {
+  try {
+    const stickersDir = path.join(ROOT_DIR, 'stickers');
+    if (!fs.existsSync(stickersDir)) {
+      await fs.promises.mkdir(stickersDir, { recursive: true });
+    }
+    const files = await fs.promises.readdir(stickersDir);
+    const stickers = files.filter(f => /\.(png|webp|jpe?g)$/i.test(f)).sort();
+    return res.json({ stickers });
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not list stickers', detail: error.message });
+  }
+});
+
+/**
+ * GET /api/instagram/status
+ * Check if Instagram session is active and logged in.
+ */
+app.get('/api/instagram/status', async (req, res) => {
+  try {
+    const serviceScript = path.join(ROOT_DIR, 'services', 'instagram', 'service.py');
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(getPythonExecutable(), [serviceScript, 'status'], { cwd: ROOT_DIR });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+
+    const lines = String(result.stdout || '').trim().split(/\r?\n/).filter(Boolean);
+    const payload = lines.length ? JSON.parse(lines[lines.length - 1]) : { logged_in: false };
+    return res.json(payload);
+  } catch (error) {
+    return res.json({ logged_in: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/instagram/login
+ * Launch Chrome to log in to Instagram interactively.
+ */
+app.post('/api/instagram/login', async (req, res) => {
+  try {
+    const loginScript = path.join(ROOT_DIR, 'services', 'instagram', 'login_helper.py');
+    const child = spawn(getPythonExecutable(), [loginScript], { cwd: ROOT_DIR });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('close', (code) => {
+      const lines = String(stdout || '').trim().split(/\r?\n/).filter(Boolean);
+      const payload = lines.length ? JSON.parse(lines[lines.length - 1]) : { status: code === 0 ? 'success' : 'error' };
+      if (code === 0) {
+        return res.json({ status: 'success', message: 'Instagram logged in successfully!' });
+      } else {
+        return res.status(400).json({ error: payload.message || 'Login was not completed or timed out.', detail: stderr });
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Could not launch Instagram login helper.', detail: error.message });
+  }
+});
+
+/**
+ * GET /api/viral-hooks?q=...&clip_len=15
+ * Query Instagram for viral hooks and heatmap timestamps.
+ */
+app.get('/api/viral-hooks', async (req, res) => {
+  const query = String(req.query.q || '').trim();
+  const clipLen = parseInt(req.query.clip_len || '15', 10);
+  if (!query) return res.status(400).json({ error: 'Query parameter "q" is required.' });
+
+  try {
+    const serviceScript = path.join(ROOT_DIR, 'services', 'instagram', 'service.py');
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(getPythonExecutable(), [serviceScript, 'search', query, String(clipLen)], { cwd: ROOT_DIR });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+
+    const lines = String(result.stdout || '').trim().split(/\r?\n/).filter(Boolean);
+    const payload = lines.length ? JSON.parse(lines[lines.length - 1]) : {};
+
+    if (payload.error === 'NOT_LOGGED_IN') {
+      return res.status(401).json({ error: 'NOT_LOGGED_IN', message: 'Please log into Instagram first to extract viral hooks.' });
+    }
+
+    if (result.code !== 0 || payload.error) {
+      return res.status(400).json({ error: payload.message || payload.error || 'Failed to search Instagram music hooks.', detail: result.stderr });
+    }
+
+    return res.json(payload);
+  } catch (error) {
+    console.error('Viral hook lookup error:', error);
+    return res.status(500).json({ error: 'Could not extract viral hooks.', detail: error.message });
+  }
+});
+
+/**
+ * Utility: Parse raw LRC text into structured timestamps JSON
+ */
+export function parseLrcTimestamps(lrcText) {
+  
+  const lines = lrcText.split('\n');
+  const result = [];
+  const timeRegex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/;
+
+  let idx = 0;
+  for (const line of lines) {
+    const match = line.match(timeRegex);
+    if (match) {
+      const minutes = parseInt(match[1], 10);
+      const seconds = parseInt(match[2], 10);
+      const millis = match[3] ? (match[3].length === 2 ? parseInt(match[3], 10) * 10 : parseInt(match[3], 10)) : 0;
+      const totalSeconds = parseFloat((minutes * 60 + seconds + millis / 1000).toFixed(3));
+      const totalMs = minutes * 60000 + seconds * 1000 + millis;
+      const text = match[4].trim();
+
+      if (text.length > 0) {
+        result.push({
+          index: idx++,
+          timestamp: `${match[1]}:${match[2]}${match[3] ? '.' + match[3] : ''}`,
+          timeSeconds: totalSeconds,
+          timeMs: totalMs,
+          text: text,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
+
+/**
+ * POST /api/recognize-upload
+ * Streams a local video file upload into a temp directory for song recognition.
+ */
+app.post('/api/recognize-upload', (req, res) => {
+  try {
+    const rawName = String(req.query.name || 'uploaded_video.mp4').trim();
+    const safeName = rawName.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 80);
+    const tempFilePath = path.join(os.tmpdir(), `recog_${Date.now()}_${safeName}`);
+    const writeStream = fs.createWriteStream(tempFilePath);
+
+    req.pipe(writeStream);
+
+    writeStream.on('finish', () => {
+      if (fs.existsSync(tempFilePath) && fs.statSync(tempFilePath).size > 0) {
+        return res.json({
+          success: true,
+          filePath: tempFilePath,
+          filename: safeName,
+          sizeBytes: fs.statSync(tempFilePath).size
+        });
+      } else {
+        return res.status(400).json({ error: 'Uploaded video file was empty.' });
+      }
+    });
+
+    writeStream.on('error', (err) => {
+      console.error('Recognition upload stream error:', err);
+      return res.status(500).json({ error: 'Failed to write uploaded video file.', detail: err.message });
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Upload handler error.', detail: err.message });
+  }
+});
+
+/**
+ * GET /api/recognize-stream
+ * Server-Sent Events (SSE) streaming endpoint for Song Recognition
+ * Supports single YouTube Short (-s), Channel top N shorts (-c), or local video (-l).
+ */
+app.get('/api/recognize-stream', async (req, res) => {
+  const mode = String(req.query.mode || 'short').toLowerCase().trim();
+  const rawTarget = String(req.query.target || '').trim();
+  const topCount = Math.max(1, Math.min(20, parseInt(req.query.top_count || '5', 10)));
+
+  if (!rawTarget) {
+    return res.status(400).json({ error: 'Target URL or local video path is required.' });
+  }
+
+  // Setup SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendSSE = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendSSE('start', {
+    message: `Starting song recognition in mode: ${mode}...`,
+    mode,
+    target: rawTarget
+  });
+
+  // Resolve local file target if applicable
+  let resolvedTarget = rawTarget;
+  if (mode === 'local') {
+    if (!path.isAbsolute(resolvedTarget)) {
+      const candidateInput = path.join(VIDEO_INPUT_DIR, resolvedTarget);
+      if (fs.existsSync(candidateInput)) {
+        resolvedTarget = candidateInput;
+      }
+    }
+    if (!fs.existsSync(resolvedTarget)) {
+      sendSSE('error', { error: `Local video file does not exist: ${resolvedTarget}` });
+      return res.end();
+    }
+  }
+
+  const recognitionScript = path.join(ROOT_DIR, 'services', 'recognition', 'main.py');
+  const pythonArgs = [recognitionScript];
+
+  if (mode === 'channel') {
+    pythonArgs.push('-c', resolvedTarget, '-n', String(topCount), '--json');
+  } else if (mode === 'local') {
+    pythonArgs.push('-l', resolvedTarget, '--json');
+  } else {
+    // Default: single_short
+    pythonArgs.push('-s', resolvedTarget, '--json');
+  }
+
+  const pyExecutable = getPythonExecutable();
+  const pyProcess = spawn(pyExecutable, pythonArgs, {
+    cwd: ROOT_DIR,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+  });
+
+  let finalPayload = null;
+
+  pyProcess.stdout.on('data', (data) => {
+    const lines = data.toString('utf-8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      if (trimmed.startsWith('__RECOGNITION_PROGRESS__')) {
+        try {
+          const jsonStr = trimmed.replace('__RECOGNITION_PROGRESS__', '').trim();
+          sendSSE('progress', JSON.parse(jsonStr));
+        } catch {}
+      } else if (trimmed.startsWith('__SHORT_ITEM__')) {
+        try {
+          const jsonStr = trimmed.replace('__SHORT_ITEM__', '').trim();
+          sendSSE('short_item', JSON.parse(jsonStr));
+        } catch {}
+      } else if (trimmed.startsWith('__RECOGNITION_RESULT__')) {
+        try {
+          const jsonStr = trimmed.replace('__RECOGNITION_RESULT__', '').trim();
+          finalPayload = JSON.parse(jsonStr);
+          sendSSE('complete', finalPayload);
+        } catch {}
+      } else if (trimmed.startsWith('__RECOGNITION_ERROR__')) {
+        try {
+          const jsonStr = trimmed.replace('__RECOGNITION_ERROR__', '').trim();
+          sendSSE('error', JSON.parse(jsonStr));
+        } catch {}
+      } else {
+        sendSSE('log', { message: trimmed });
+      }
+    }
+  });
+
+  pyProcess.stderr.on('data', (data) => {
+    const msg = data.toString('utf-8').trim();
+    if (msg) {
+      sendSSE('log', { message: msg });
+    }
+  });
+
+  pyProcess.on('close', (code) => {
+    if (code !== 0 && !finalPayload) {
+      sendSSE('error', { error: `Recognition engine exited with code ${code}` });
+    }
+    res.end();
+  });
+
+  req.on('close', () => {
+    pyProcess.kill();
+  });
+});
+
+/**
+ * GET /api/generate-video-stream?q=...
+ * Server-Sent Events (SSE) streaming endpoint that runs generator.py in Python
+ * and delivers real-time progress events to the frontend.
+ */
+app.get('/api/generate-video-stream', async (req, res) => {
+  const query = req.query.q;
+  if (!query) {
+    return res.status(400).json({ error: 'Query parameter "q" is required' });
+  }
+
+  // Setup SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendSSE = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  sendSSE('start', { message: `Initiating video generation for "${query}"...`, query });
+
+  const safeName = query.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 50);
+  const videoFileName = `${safeName}_${Date.now()}.mp4`;
+  const videoOutputPath = path.join(VIDEO_OUTPUT_DIR, videoFileName);
+  const tempWorkDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lyricalvideo-'));
+  const tempAudioPath = path.join(tempWorkDir, `${safeName}_temp.mp3`);
+  const tempAssPath = path.join(tempWorkDir, `${safeName}_temp.ass`);
+
+  const offset = req.query.offset || '0.0';
+  const template = req.query.template || 'template1';
+  const font = req.query.font || '';
+  const lang = req.query.lang || 'auto';
+  const placement = req.query.placement || 'center';
+  const ypos = req.query.ypos || '50';
+  const xpos = req.query.xpos || '50';
+  const bratTheme = req.query.brat_theme || 'green';
+  const fontsize = req.query.fontsize || '';
+  const blur = req.query.blur || '';
+  const spacing = req.query.spacing || '';
+  const wordSpacing = req.query.word_spacing || '';
+  const topHeader = req.query.top_header || '';
+  const introHeader = req.query.intro_header || '';
+  const startSeconds = req.query.start_seconds || '';
+  const endSeconds = req.query.end_seconds || '';
+  const previewQuality = req.query.preview_quality || 'final';
+  const masterVariant = req.query.master_variant || 'default';
+  const ytHindiVariant = req.query.yt_hindi_variant || 'standard';
+  const nokiaScreenColor = req.query.nokia_screen_color || req.query.screen_color || '#b40000';
+  const nokiaSticker = req.query.nokia_sticker || '';
+  const bratBold = req.query.brat_bold === 'true';
+  const bratCasing = req.query.brat_casing || 'upper';
+  const bgFolders = req.query.bg_folders || '';
+
+  const pythonScript = path.join(ROOT_DIR, 'engine', 'generator.py');
+  const pythonArgs = [
+    pythonScript,
+    query,
+    videoOutputPath,
+    `--offset=${offset}`,
+    `--template=${template}`,
+    `--lang=${lang}`,
+    `--placement=${placement}`,
+    `--ypos=${ypos}`,
+    `--xpos=${xpos}`,
+    `--brat-theme=${bratTheme}`,
+    `--brat-casing=${bratCasing}`,
+    `--master-variant=${masterVariant}`,
+    `--yt-hindi-variant=${ytHindiVariant}`,
+    `--nokia-screen-color=${nokiaScreenColor}`,
+    '--json-progress'
+  ];
+  if (bgFolders) {
+    pythonArgs.push(`--bg-folders=${bgFolders}`);
+  }
+  if (bratBold) {
+    pythonArgs.push('--brat-bold');
+  }
+  if (nokiaSticker) {
+    pythonArgs.push(`--nokia-sticker=${nokiaSticker}`);
+  }
+  if (font) {
+    pythonArgs.push(`--font=${font}`);
+  }
+  if (fontsize) {
+    pythonArgs.push(`--fontsize=${fontsize}`);
+  }
+  if (blur) {
+    pythonArgs.push(`--blur=${blur}`);
+  }
+  if (spacing !== '') {
+    pythonArgs.push(`--spacing=${spacing}`);
+  }
+  if (wordSpacing !== '') {
+    pythonArgs.push(`--word-spacing=${wordSpacing}`);
+  }
+  if (topHeader) {
+    pythonArgs.push(`--top-header=${topHeader}`);
+  }
+  if (introHeader) {
+    pythonArgs.push(`--intro-header=${introHeader}`);
+  }
+  if (startSeconds !== '') {
+    pythonArgs.push(`--start-seconds=${startSeconds}`);
+  }
+  if (endSeconds !== '') {
+    pythonArgs.push(`--end-seconds=${endSeconds}`);
+  }
+  pythonArgs.push(`--preview-quality=${previewQuality}`);
+
+  const pyExecutable = getPythonExecutable();
+  const pythonProcess = spawn(pyExecutable, pythonArgs, {
+    cwd: path.join(__dirname, '..')
+  });
+
+  let latestResult = null;
+
+  pythonProcess.stdout.on('data', (data) => {
+    const lines = data.toString().split('\n');
+    for (const line of lines) {
+      if (line.startsWith('__JSON_PROGRESS__')) {
+        try {
+          const jsonStr = line.replace('__JSON_PROGRESS__', '').trim();
+          const parsed = JSON.parse(jsonStr);
+          sendSSE('progress', parsed);
+        } catch (e) {
+          // ignore parsing error
+        }
+      } else if (line.startsWith('__FINAL_RESULT__')) {
+        try {
+          const jsonStr = line.replace('__FINAL_RESULT__', '').trim();
+          latestResult = JSON.parse(jsonStr);
+        } catch (e) {}
+      } else if (line.trim()) {
+        sendSSE('log', { message: line.trim() });
+      }
+    }
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (msg) {
+      sendSSE('log', { message: msg });
+    }
+  });
+
+  pythonProcess.on('close', async (code) => {
+    if (code === 0) {
+      const responseData = {
+        status: 'success',
+        query,
+        videoFileName,
+        videoUrl: `/videos/${videoFileName}`,
+        metadata: latestResult || {
+          output_path: videoOutputPath,
+          videoUrl: `/videos/${videoFileName}`
+        }
+      };
+      sendSSE('complete', responseData);
+    } else {
+      sendSSE('error', { error: `Python generator exited with code ${code}` });
+    }
+    await fs.promises.rm(tempWorkDir, { recursive: true, force: true }).catch(() => {});
+    res.end();
+  });
+
+  req.on('close', () => {
+    pythonProcess.kill();
+  });
+});
+
+/**
+ * POST /api/generate-carousel
+ * Render one PNG slide per selected lyric line.
+ */
+app.post('/api/generate-carousel', async (req, res) => {
+  const body = req.body || {};
+  const aspectRatio = body.aspect_ratio === '9:16' ? '9:16' : '4:5';
+  const lyricsLines = Array.isArray(body.lyrics_lines)
+    ? body.lyrics_lines.map((line) => String(line).trim()).filter(Boolean)
+    : [];
+  if (!lyricsLines.length) return res.status(400).json({ error: 'Provide at least one lyric line.' });
+
+  const title = String(body.song_title || 'Unknown song').trim().slice(0, 200);
+  const artist = String(body.artist_name || 'Unknown artist').trim().slice(0, 200);
+  const cover = String(body.album_cover || '').trim().slice(0, 2000);
+  const requestedWorkers = Number(body.workers);
+  const workers = Number.isFinite(requestedWorkers) ? Math.max(1, Math.min(8, Math.floor(requestedWorkers))) : 4;
+  const folderName = `${title || 'carousel'}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 80);
+  const outputDir = path.join(CAROUSEL_OUTPUT_DIR, folderName);
+  const tempWorkDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lyric-carousel-'));
+  const inputPath = path.join(tempWorkDir, 'carousel_input.json');
+
+  try {
+    await fs.promises.mkdir(outputDir, { recursive: true });
+    await fs.promises.writeFile(inputPath, JSON.stringify({
+      song_title: title,
+      artist_name: artist,
+      album_cover: cover,
+      lyrics_lines: lyricsLines,
+    }), 'utf8');
+    const renderer = path.join(ROOT_DIR, 'services', 'carousel', 'renderer.py');
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(getPythonExecutable(), [renderer, inputPath, outputDir, '--format', aspectRatio, '--workers', String(workers)], { cwd: ROOT_DIR });
+      let stderr = '';
+      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', (code) => resolve({ code, stderr }));
+    });
+    if (result.code !== 0) {
+      return res.status(500).json({ error: 'Carousel rendering failed.', detail: String(result.stderr || '').slice(-1200) });
+    }
+    const filenames = (await fs.promises.readdir(outputDir))
+      .filter((filename) => /^slide_\d+\.png$/i.test(filename))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const slides = filenames.map((filename) => ({
+      filename,
+      url: `/carousel-output/${encodeURIComponent(folderName)}/${encodeURIComponent(filename)}`,
+    }));
+    return res.json({ status: 'success', count: slides.length, aspect_ratio: aspectRatio, folderUrl: slides[0]?.url || '#', slides });
+  } catch (error) {
+    console.error('Carousel generation error:', error);
+    return res.status(500).json({ error: 'Could not generate carousel.', detail: error.message });
+  } finally {
+    await fs.promises.rm(tempWorkDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+/**
+ * POST /api/quick-burn-video
+ * Instant hardware-accelerated 1-2s burn of the active live layer directly into the video
+ * without re-downloading audio or re-running yt-dlp!
+ */
+app.post('/api/quick-burn-video', async (req, res) => {
+  try {
+    const {
+      query,
+      audioPath,
+      syncedLines,
+      template,
+      font,
+      fontsize,
+      blur,
+      spacing,
+      word_spacing,
+      placement,
+      ypos,
+      xpos,
+      brat_theme
+    } = req.body;
+
+    const safeName = (query || 'video').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 50);
+    const videoFileName = `${safeName}_burned_${Date.now()}.mp4`;
+    const videoOutputPath = path.join(VIDEOS_DIR, videoFileName);
+    const tempCuesPath = path.join(VIDEOS_DIR, `${safeName}_cues_temp.json`);
+
+    if (syncedLines && Array.isArray(syncedLines)) {
+      await fs.promises.writeFile(tempCuesPath, JSON.stringify(syncedLines), 'utf8');
+    }
+
+    const pythonScript = path.join(__dirname, '../generator.py');
+    const pythonArgs = [
+      pythonScript,
+      query || 'Lyric Video',
+      videoOutputPath,
+      `--template=${template || 'template1'}`,
+      `--placement=${placement || 'center'}`,
+      `--ypos=${ypos || 50}`,
+      `--xpos=${xpos || 50}`,
+      `--brat-theme=${brat_theme || 'green'}`,
+      `--brat-casing=${req.body.brat_casing || 'upper'}`,
+      `--nokia-screen-color=${req.body.nokia_screen_color || req.body.screen_color || '#b40000'}`,
+      '--json-progress'
+    ];
+
+    if (req.body.bg_folders) {
+      pythonArgs.push(`--bg-folders=${req.body.bg_folders}`);
+    }
+
+    if (req.body.brat_bold) {
+      pythonArgs.push('--brat-bold');
+    }
+
+    if (req.body.nokia_sticker) {
+      pythonArgs.push(`--nokia-sticker=${req.body.nokia_sticker}`);
+    }
+
+    const resolvedAudio = (audioPath && fs.existsSync(audioPath))
+      ? audioPath
+      : (fs.existsSync(path.join(VIDEOS_DIR, 'temp_audio.m4a'))
+        ? path.join(VIDEOS_DIR, 'temp_audio.m4a')
+        : (fs.existsSync(path.join(VIDEOS_DIR, 'temp_audio.mp3'))
+          ? path.join(VIDEOS_DIR, 'temp_audio.mp3')
+          : (fs.existsSync(path.join(__dirname, '../temp_audio.m4a'))
+            ? path.join(__dirname, '../temp_audio.m4a')
+            : (fs.existsSync(path.join(__dirname, '../temp_audio.mp3'))
+              ? path.join(__dirname, '../temp_audio.mp3')
+              : null))));
+
+    if (resolvedAudio) {
+      pythonArgs.push(`--audio-file=${resolvedAudio}`);
+    }
+    if (fs.existsSync(tempCuesPath)) {
+      pythonArgs.push(`--cues-file=${tempCuesPath}`);
+    }
+    if (font) pythonArgs.push(`--font=${font}`);
+    if (fontsize) pythonArgs.push(`--fontsize=${fontsize}`);
+    if (blur !== undefined && blur !== '') pythonArgs.push(`--blur=${blur}`);
+    if (spacing !== undefined && spacing !== '') pythonArgs.push(`--spacing=${spacing}`);
+    if (word_spacing !== undefined && word_spacing !== '') pythonArgs.push(`--word-spacing=${word_spacing}`);
+
+    const pyExecutable = getPythonExecutable();
+    const py = spawn(pyExecutable, pythonArgs, { cwd: path.join(__dirname, '..') });
+
+    py.on('close', (code) => {
+      if (code === 0 && fs.existsSync(videoOutputPath)) {
+        res.json({
+          success: true,
+          videoUrl: `/videos/${videoFileName}`,
+          videoFileName: videoFileName
+        });
+      } else {
+        res.status(500).json({ error: `Python generator exited with code ${code}` });
+      }
+    });
+  } catch (err) {
+    console.error('Quick burn error:', err);
+    res.status(500).json({ error: 'Failed to burn video layer', details: err.message });
+  }
+});
+
+/**
+ * POST /api/convert-webm-to-mp4
+ * Remuxes browser-recorded WebM into universal 1080p MP4 at 1x speed with full audio using FFmpeg
+ */
+app.post('/api/convert-webm-to-mp4', (req, res) => {
+  const safeName = (req.query.name || 'recorded_video').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase().slice(0, 50);
+  const speed = parseFloat(req.query.speed) || 1.0;
+  const audioParam = req.query.audioPath;
+  const webmPath = path.join(VIDEOS_DIR, `${safeName}_${Date.now()}.webm`);
+  const mp4FileName = `${safeName}_exact_1080p_${Date.now()}.mp4`;
+  const mp4Path = path.join(VIDEOS_DIR, mp4FileName);
+
+  const writeStream = fs.createWriteStream(webmPath);
+  req.pipe(writeStream);
+
+  writeStream.on('finish', () => {
+    const resolvedAudio = (audioParam && fs.existsSync(audioParam))
+      ? audioParam
+      : (fs.existsSync(path.join(VIDEOS_DIR, 'temp_audio.mp3'))
+        ? path.join(VIDEOS_DIR, 'temp_audio.mp3')
+        : (fs.existsSync(path.join(__dirname, '../temp_audio.mp3'))
+          ? path.join(__dirname, '../temp_audio.mp3')
+          : null));
+
+    const ffmpegArgs = ['-y', '-i', webmPath];
+    if (resolvedAudio) {
+      ffmpegArgs.push('-i', resolvedAudio);
+    }
+
+    if (speed > 1.01) {
+      ffmpegArgs.push('-filter:v', `setpts=${speed.toFixed(2)}*PTS`);
+    }
+
+    const videoEncoder = getBestVideoEncoder();
+    ffmpegArgs.push('-c:v', videoEncoder.name, ...videoEncoder.flags, '-pix_fmt', 'yuv420p');
+
+    if (resolvedAudio) {
+      ffmpegArgs.push('-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '192k', '-shortest');
+    } else {
+      ffmpegArgs.push('-c:a', 'aac', '-b:a', '192k');
+    }
+
+    ffmpegArgs.push('-movflags', '+faststart', mp4Path);
+
+    const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+
+    ffmpeg.on('close', (code) => {
+      if (code === 0 && fs.existsSync(mp4Path)) {
+        res.json({
+          success: true,
+          videoUrl: `/videos/${mp4FileName}`,
+          videoFileName: mp4FileName
+        });
+      } else {
+        res.json({
+          success: true,
+          videoUrl: `/videos/${path.basename(webmPath)}`,
+          videoFileName: path.basename(webmPath)
+        });
+      }
+    });
+  });
+
+  writeStream.on('error', (err) => {
+    console.error('Error saving recorded webm:', err);
+    res.status(500).json({ error: 'Failed to save recorded video' });
+  });
+});
+
+/**
+ * GET /api/videos
+ * List all rendered lyric videos
+ */
+app.get('/api/videos', async (req, res) => {
+  try {
+    if (!fs.existsSync(VIDEO_OUTPUT_DIR)) {
+      return res.json({ total: 0, videos: [] });
+    }
+
+    const files = await fs.promises.readdir(VIDEO_OUTPUT_DIR);
+    const videoFiles = files.filter(f => f.endsWith('.mp4') || f.endsWith('.webm'));
+
+    const list = await Promise.all(
+      videoFiles.map(async (filename) => {
+        const stat = await fs.promises.stat(path.join(VIDEO_OUTPUT_DIR, filename));
+        return {
+          filename,
+          url: `/videos/${filename}`,
+          format: filename.endsWith('.mp4') ? 'mp4' : 'webm',
+          sizeBytes: stat.size,
+          sizeMb: (stat.size / (1024 * 1024)).toFixed(2),
+          createdAt: stat.birthtime || stat.mtime
+        };
+      })
+    );
+
+    list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return res.json({ total: list.length, videos: list });
+  } catch (err) {
+    console.error('Error listing videos:', err);
+    return res.status(500).json({ error: 'Failed to list videos' });
+  }
+});
+
+/**
+ * GET /api/background-folders
+ * Returns all folders and subfolders containing video files under videos/input/.
+ */
+app.get('/api/background-folders', (req, res) => {
+  const videoExtensions = ['.mp4', '.mov', '.mkv', '.webm', '.avi'];
+  const foldersMap = new Map();
+  let totalVideos = 0;
+
+  function scanDir(currentDir, relPath = '') {
+    if (!fs.existsSync(currentDir)) return 0;
+    try {
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      let countInThisDir = 0;
+      let directVideos = 0;
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        const entryRel = relPath ? path.join(relPath, entry.name).replace(/\\/g, '/') : entry.name;
+
+        if (entry.isDirectory()) {
+          const subCount = scanDir(fullPath, entryRel);
+          countInThisDir += subCount;
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (videoExtensions.includes(ext)) {
+            countInThisDir++;
+            directVideos++;
+            totalVideos++;
+          }
+        }
+      }
+
+      if (relPath && countInThisDir > 0) {
+        foldersMap.set(relPath.replace(/\\/g, '/'), {
+          name: relPath.replace(/\\/g, '/'),
+          path: relPath.replace(/\\/g, '/'),
+          count: countInThisDir,
+          directCount: directVideos
+        });
+      }
+      return countInThisDir;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  scanDir(VIDEO_INPUT_DIR);
+
+  const foldersList = Array.from(foldersMap.values()).sort((a, b) => a.path.localeCompare(b.path));
+  res.json({
+    totalVideos,
+    folders: foldersList
+  });
+});
+
+/**
+ * GET /api/background-videos
+ * Lists user-provided background video files from videos/input/ or specified folder(s).
+ */
+app.get('/api/background-videos', (req, res) => {
+  const reqFolders = req.query.folders ? req.query.folders.split(',') : (req.query.folder ? [req.query.folder] : []);
+  const videoExtensions = ['.mp4', '.mov', '.mkv', '.webm', '.avi'];
+  const found = [];
+  const seenPaths = new Set();
+
+  const targetDirs = [];
+  if (reqFolders.length > 0) {
+    for (const rf of reqFolders) {
+      const trimmed = rf.trim();
+      if (!trimmed) continue;
+      const cand = path.join(VIDEO_INPUT_DIR, trimmed);
+      if (fs.existsSync(cand)) targetDirs.push(cand);
+    }
+  } else {
+    if (fs.existsSync(VIDEO_INPUT_DIR)) targetDirs.push(VIDEO_INPUT_DIR);
+  }
+
+  function collectVideos(dir) {
+    if (!fs.existsSync(dir)) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          collectVideos(fullPath);
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (videoExtensions.includes(ext) && !seenPaths.has(fullPath)) {
+            seenPaths.add(fullPath);
+            const stat = fs.statSync(fullPath);
+            found.push({
+              filename: entry.name,
+              folder: path.relative(VIDEO_INPUT_DIR, dir).replace(/\\/g, '/') || 'root',
+              path: path.relative(VIDEO_INPUT_DIR, fullPath).replace(/\\/g, '/'),
+              sizeMb: (stat.size / (1024 * 1024)).toFixed(2)
+            });
+          }
+        }
+      }
+    } catch (e) { /* skip */ }
+  }
+
+  for (const td of targetDirs) {
+    collectVideos(td);
+  }
+
+  res.json({ total: found.length, videos: found });
+});
+
+/**
+ * GET /api/lyrics/synced
+ */
+app.get('/api/lyrics/synced', async (req, res) => {
+  try {
+    const { q, track_name, artist_name, album_name } = req.query;
+
+    let targetUrl;
+    if (q) {
+      targetUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(q)}`;
+    } else if (track_name) {
+      const params = new URLSearchParams();
+      params.append('track_name', track_name);
+      if (artist_name) params.append('artist_name', artist_name);
+      if (album_name) params.append('album_name', album_name);
+      targetUrl = `https://lrclib.net/api/search?${params.toString()}`;
+    } else {
+      return res.status(400).json({ error: 'Search parameter "q" or "track_name" is required' });
+    }
+
+    const response = await fetch(targetUrl, {
+      headers: { 'User-Agent': USER_AGENT },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: 'LRCLIB API error', details: errorText });
+    }
+
+    const searchResults = await response.json();
+    if (!Array.isArray(searchResults) || searchResults.length === 0) {
+      return res.status(404).json({ error: 'No songs found matching query', query: q || track_name });
+    }
+
+    const bestMatch = searchResults.find(item => !!(item.syncedLyrics && item.syncedLyrics.trim().length > 0)) || searchResults[0];
+    const parsedLines = parseLrcTimestamps(bestMatch.syncedLyrics || '');
+
+    const resultPayload = {
+      id: bestMatch.id,
+      trackName: bestMatch.trackName || bestMatch.name,
+      artistName: bestMatch.artistName,
+      albumName: bestMatch.albumName,
+      duration: bestMatch.duration,
+      instrumental: bestMatch.instrumental || false,
+      hasSyncedLyrics: !!bestMatch.syncedLyrics,
+      rawLrc: bestMatch.syncedLyrics || null,
+      plainLyrics: bestMatch.plainLyrics || null,
+      syncedLines: parsedLines,
+      totalLines: parsedLines.length,
+      allMatchesCount: searchResults.length
+    };
+
+    currentSongSession = resultPayload;
+    return res.json(resultPayload);
+  } catch (error) {
+    console.error('Error fetching synced lyrics:', error);
+    return res.status(500).json({ error: 'Failed to process synced lyrics', message: error.message });
+  }
+});
+
+/**
+ * GET /api/lyrics/search
+ */
+app.get('/api/lyrics/search', async (req, res) => {
+  try {
+    const { q, track_name, artist_name, album_name } = req.query;
+
+    let targetUrl;
+    if (q) {
+      targetUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(q)}`;
+    } else if (track_name) {
+      const params = new URLSearchParams();
+      params.append('track_name', track_name);
+      if (artist_name) params.append('artist_name', artist_name);
+      if (album_name) params.append('album_name', album_name);
+      targetUrl = `https://lrclib.net/api/search?${params.toString()}`;
+    } else {
+      return res.status(400).json({ error: 'Search query "q" or "track_name" is required' });
+    }
+
+    const response = await fetch(targetUrl, {
+      headers: { 'User-Agent': USER_AGENT },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: 'LRCLIB API error', details: errorText });
+    }
+
+    const data = await response.json();
+    const formattedData = Array.isArray(data) ? data
+      .map(item => ({
+        ...item,
+        syncedLines: parseLrcTimestamps(item.syncedLyrics || ''),
+        hasSyncedLyrics: !!(item.syncedLyrics && item.syncedLyrics.trim().length > 0)
+      }))
+      .sort((a, b) => (b.hasSyncedLyrics === a.hasSyncedLyrics ? 0 : b.hasSyncedLyrics ? 1 : -1))
+      : data;
+
+    return res.json(formattedData);
+  } catch (error) {
+    console.error('Error searching lyrics:', error);
+    return res.status(500).json({ error: 'Failed to search lyrics', message: error.message });
+  }
+});
+
+/**
+ * POST /api/lyrics/save
+ */
+app.post('/api/lyrics/save', async (req, res) => {
+  try {
+    const { track, customFilename } = req.body;
+    if (!track) {
+      return res.status(400).json({ error: 'Track payload is required' });
+    }
+
+    await fs.promises.mkdir(LYRICS_DIR, { recursive: true });
+
+    const safeArtist = (track.artistName || 'Unknown_Artist').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+    const safeTitle = (track.trackName || track.name || 'Unknown_Track').replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase();
+    
+    const filename = customFilename 
+      ? `${customFilename.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
+      : `${safeArtist}_${safeTitle}.json`;
+
+    const filePath = path.join(LYRICS_DIR, filename);
+
+    const parsedLines = track.syncedLines && track.syncedLines.length > 0
+      ? track.syncedLines
+      : parseLrcTimestamps(track.syncedLyrics || '');
+
+    const payloadToSave = {
+      id: track.id,
+      trackName: track.trackName || track.name,
+      artistName: track.artistName,
+      albumName: track.albumName,
+      duration: track.duration,
+      instrumental: track.instrumental || false,
+      hasSyncedLyrics: !!(track.syncedLyrics || (parsedLines && parsedLines.length > 0)),
+      savedAt: new Date().toISOString(),
+      totalLines: parsedLines.length,
+      syncedLines: parsedLines,
+      rawLrc: track.syncedLyrics || null,
+      plainLyrics: track.plainLyrics || null
+    };
+
+    await fs.promises.writeFile(filePath, JSON.stringify(payloadToSave, null, 2), 'utf-8');
+
+    if (track.syncedLyrics) {
+      const lrcFilename = filename.replace(/\.json$/, '.lrc');
+      const lrcFilePath = path.join(LYRICS_DIR, lrcFilename);
+      await fs.promises.writeFile(lrcFilePath, track.syncedLyrics, 'utf-8');
+    }
+
+    return res.json({
+      status: 'success',
+      message: `Successfully saved synced JSON to lyrics folder!`,
+      filename: filename,
+      filePath: `lyrics/${filename}`,
+      totalLines: parsedLines.length,
+      savedData: payloadToSave
+    });
+  } catch (error) {
+    console.error('Error saving lyrics file:', error);
+    return res.status(500).json({ error: 'Failed to save lyrics file', message: error.message });
+  }
+});
+
+/**
+ * GET /api/lyrics/saved
+ */
+app.get('/api/lyrics/saved', async (req, res) => {
+  try {
+    if (!fs.existsSync(LYRICS_DIR)) {
+      return res.json({ files: [] });
+    }
+
+    const fileList = await fs.promises.readdir(LYRICS_DIR);
+    const jsonFiles = fileList.filter(f => f.endsWith('.json'));
+
+    const results = await Promise.all(
+      jsonFiles.map(async (filename) => {
+        try {
+          const content = await fs.promises.readFile(path.join(LYRICS_DIR, filename), 'utf-8');
+          const parsed = JSON.parse(content);
+          return {
+            filename,
+            trackName: parsed.trackName,
+            artistName: parsed.artistName,
+            totalLines: parsed.totalLines || (parsed.syncedLines ? parsed.syncedLines.length : 0),
+            savedAt: parsed.savedAt,
+            hasSyncedLyrics: parsed.hasSyncedLyrics
+          };
+        } catch {
+          return { filename };
+        }
+      })
+    );
+
+    return res.json({ total: results.length, files: results });
+  } catch (error) {
+    console.error('Error listing saved lyrics:', error);
+    return res.status(500).json({ error: 'Failed to list saved files' });
+  }
+});
+
+/**
+ * POST /api/lyrics/select
+ */
+app.post('/api/lyrics/select', (req, res) => {
+  const { track } = req.body;
+  if (!track) {
+    return res.status(400).json({ error: 'Track object is required' });
+  }
+
+  const parsedLines = parseLrcTimestamps(track.syncedLyrics || '');
+  currentSongSession = {
+    ...track,
+    rawLrc: track.syncedLyrics || null,
+    syncedLines: parsedLines,
+    totalLines: parsedLines.length,
+    updatedAt: new Date().toISOString()
+  };
+
+  return res.json({
+    status: 'success',
+    message: 'Active song session updated',
+    session: currentSongSession
+  });
+});
+
+/**
+ * GET /api/lyrics/current
+ */
+app.get('/api/lyrics/current', (req, res) => {
+  if (!currentSongSession) {
+    return res.status(404).json({ error: 'No active song session selected yet' });
+  }
+  return res.json(currentSongSession);
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`🎵 LyricalVideo Server is running on http://localhost:${PORT}`);
+});

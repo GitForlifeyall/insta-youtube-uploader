@@ -1,0 +1,29 @@
+services:
+  lyricalvideo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: lyricalvideo_app
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - PYTHONUNBUFFERED=1
+      - SPOTIFY_LYRICS_API_URL=http://spotify-lyrics-api:8080
+    volumes:
+      - ../videos/input:/app/videos/input
+      - ../videos/output:/app/videos/output
+      - ../lyrics:/app/lyrics
+      - ../config/headers:/app/config/headers
+      - ../.env:/app/.env
+    restart: unless-stopped
+
+  spotify-lyrics-api:
+    image: akashrchandran/spotify-lyrics-api:latest
+    container_name: spotify_lyrics_api
+    ports:
+      - "8080:8080"
+    environment:
+      - SP_DC=${SPOTIFY_SP_DC:-}
+    restart: unless-stopped

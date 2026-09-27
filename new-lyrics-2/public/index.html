@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LyricalStudio — 1080p Transparent Lyric Video Generator</title>
+  <meta name="description" content="Parallel 1080p 30fps Transparent Lyric-Video Overlay Generator powered by Python, yt-dlp, LRCLIB API, and FFmpeg.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..800;1,9..40,400..800&family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600;1,700;1,800&family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,600;1,700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=Oswald:wght@600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="song-image.css">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="calendar.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+  <!-- Ambient Gradient Background -->
+  <div class="background-glow">
+    <div class="glow-circle glow-1"></div>
+    <div class="glow-circle glow-2"></div>
+    <div class="glow-circle glow-3"></div>
+  </div>
+
+  <div class="app-container">
+    <!-- Main Generator Hero with Templates -->
+    <section class="generator-hero">
+      <!-- Workflow Mode Selector Bar -->
+      <div class="workflow-mode-bar">
+        <div class="workflow-tabs">
+          <button type="button" class="workflow-tab-btn active" id="tab-direct-generator">
+            <span class="workflow-icon">⚡</span>
+            <span>Lyric Video Generator</span>
+          </button>
+          <button type="button" class="workflow-tab-btn" id="tab-song-recognition">
+            <span class="workflow-icon">🎵</span>
+            <span>Song Recognition Pipeline</span>
+            <span class="workflow-pill-badge">Shorts &amp; Videos</span>
+          </button>
+          <a href="http://localhost:8000" target="_blank" class="workflow-tab-btn" id="tab-social-hub" style="text-decoration: none;">
+            <span class="workflow-icon">📅</span>
+            <span>Metricool Planner &amp; Analytics</span>
+            <span class="workflow-pill-badge" style="background:#e7ff56; color:#000; font-weight:800;">LIVE HUB</span>
+          </a>
+        </div>
+        <div class="workflow-quick-status" id="workflow-quick-status">
+          <span class="status-indicator-dot"></span>
+          <span>ACRCloud + Spotify Ready</span>
+        </div>
+      </div>
+
+      <!-- Song Recognition Studio Panel (Flag-based UI Buttons) -->
+      <div class="song-recognition-studio" id="song-recognition-studio" style="display: none;">
+        <div class="recognition-header">
+          <div class="recognition-title-group">
+            <div class="recognition-badge-icon">🎧</div>
+            <div>
+              <h3 class="recognition-title">Song Recognition &amp; Timestamp Pipeline</h3>
+              <p class="recognition-subtitle">Identify songs from YouTube Shorts, Channels, or Local Videos &amp; automatically send Spotify links &amp; match timestamps into the Lyric Generator.</p>
+            </div>
+          </div>
+          <button type="button" class="recognition-close-btn" id="recognition-close-btn" title="Close Recognition Studio">✕</button>
+        </div>
+
+        <!-- Mode Flags as Usable Interactive Buttons -->
+        <div class="recognition-flags-toolbar">
+          <span class="flags-label">🚩 Mode Flag:</span>
+          <div class="flag-pills-group" id="recognition-flag-group">
+            <button type="button" class="flag-pill active" data-mode="short" id="btn-flag-short">
+              <span class="flag-icon">📱</span>
+              <span class="flag-title">Single Short</span>
+              <span class="flag-arg">-s</span>
+            </button>
+            <button type="button" class="flag-pill" data-mode="channel" id="btn-flag-channel">
+              <span class="flag-icon">📺</span>
+              <span class="flag-title">Channel Top Shorts</span>
+              <span class="flag-arg">-c</span>
+            </button>
+            <button type="button" class="flag-pill" data-mode="local" id="btn-flag-local">
+              <span class="flag-icon">📁</span>
+              <span class="flag-title">Local Video File</span>
+              <span class="flag-arg">-l</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Single Short Input Form (Flag 1: -s) -->
+        <div class="recognition-input-card" id="recog-input-short">
+          <div class="recog-input-row">
+            <div class="recog-input-wrapper">
+              <span class="recog-input-icon">🔗</span>
+              <input type="text" id="recog-short-url" class="recog-input" placeholder="Paste YouTube Short or Video URL (e.g. https://www.youtube.com/shorts/...)" />
+            </div>
+            <button type="button" class="recog-run-btn" id="recog-run-short-btn">
+              <span>🚀 Recognize Song &amp; Timestamps</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Channel Top Shorts Input Form (Flag 2: -c, -n) -->
+        <div class="recognition-input-card" id="recog-input-channel" style="display: none;">
+          <div class="recog-input-row">
+            <div class="recog-input-wrapper">
+              <span class="recog-input-icon">📺</span>
+              <input type="text" id="recog-channel-url" class="recog-input" placeholder="Paste YouTube Channel URL or Short from the channel (e.g. https://www.youtube.com/@EdSheeran)..." />
+            </div>
+            <div class="recog-count-group">
+              <span class="count-label">Top Count (-n):</span>
+              <button type="button" class="count-pill" data-count="3">3</button>
+              <button type="button" class="count-pill active" data-count="5">5</button>
+              <button type="button" class="count-pill" data-count="10">10</button>
+            </div>
+            <button type="button" class="recog-run-btn" id="recog-run-channel-btn">
+              <span>🚀 Analyze Top Shorts</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Local Video Input Form (Flag 3: -l) -->
+        <div class="recognition-input-card" id="recog-input-local" style="display: none;">
+          <div class="recog-local-dropzone" id="recog-dropzone">
+            <input type="file" id="recog-file-input" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" style="display: none;" />
+            <div class="dropzone-content">
+              <span class="dropzone-icon">📥</span>
+              <div class="dropzone-text">
+                <strong id="recog-file-label">Click to select or drag &amp; drop video file (.mp4, .mov, .webm)</strong>
+                <p>First 15 seconds will be analyzed for song identification</p>
+              </div>
+            </div>
+          </div>
+          <div class="recog-local-or-row">
+            <span class="or-label">Or choose existing video from videos/input:</span>
+            <select id="recog-saved-video-select" class="custom-studio-input" style="max-width: 320px;">
+              <option value="">-- Select from videos/input/ --</option>
+            </select>
+            <button type="button" class="recog-run-btn" id="recog-run-local-btn">
+              <span>🚀 Recognize Local Video</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Live Progress Status -->
+        <div class="recog-progress-box" id="recog-progress-box" style="display: none;">
+          <div class="recog-progress-header">
+            <div class="recog-pulse-status">
+              <div class="pulse-dot"></div>
+              <span id="recog-progress-text">Analyzing video sample...</span>
+            </div>
+            <span id="recog-progress-percent" class="badge badge-accent">0%</span>
+          </div>
+          <div class="progress-bar-track">
+            <div id="recog-progress-fill" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Recognition Results Area -->
+        <div class="recog-results-container" id="recog-results-container" style="display: none;">
+          <!-- Dynamically populated via app.js -->
+        </div>
+      </div>
+
+      <!-- Command Search Form -->
+      <form id="generator-form" class="generator-form">
+        <div class="command-bar-wrapper">
+          <div class="command-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+          </div>
+          <input
+            type="text"
+            id="song-query-input"
+            class="command-input"
+            placeholder="Paste a Spotify track link"
+            value="The Weeknd - Blinding Lights"
+            autocomplete="off"
+            required
+          />
+          <button type="submit" id="generate-btn" class="generate-btn">
+            <span id="btn-text">Generate Video Overlay</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </button>
+        </div>
+      </form>
+
+      <!-- Studio Controls (Templates, Font, Language) -->
+      <div class="studio-controls-panel">
+        <!-- Templates Selector -->
+        <div class="control-row">
+          <span class="control-label">🎨 Template:</span>
+          <div class="template-pills-group" id="template-group">
+            <button type="button" class="template-pill active" data-template="template1">
+              <span class="template-num">Temp 1</span>
+              <span class="template-desc">📱 9:16 Kinetic Impact (TikTok / Reels)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="template2">
+              <span class="template-num">Temp 2</span>
+              <span class="template-desc">✨ 9:16 Modern Clean (Montserrat)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="template3">
+              <span class="template-num">Temp 3</span>
+              <span class="template-desc">🖥️ 16:9 Cinematic (YouTube Landscape)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="template4_brat" id="btn-template-brat">
+              <span class="template-num" style="background: #8ace00; color: #000000; font-weight: 900;">Brat</span>
+              <span class="template-desc">🟩 9:16 Brat Minimal (Charli XCX)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="yt_hindi_type" id="btn-template-yt-hindi">
+              <span class="template-num" style="background: linear-gradient(135deg,#1a0533,#3d0f6b); color: #e8c9ff; font-family: 'Cormorant Garamond', serif; font-weight: 500; letter-spacing: 0.03em;">YT Hindi</span>
+              <span class="template-desc">🎬 9:16 Cinematic Hindi Type (Videos)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="yt_hindi_intro" id="btn-template-yt-hindi-intro">
+              <span class="template-num" style="background: linear-gradient(135deg,#b71c1c,#e65100); color: #fff8e1; font-family: 'Cormorant Garamond', serif; font-weight: 600; letter-spacing: 0.03em;">Film Burn</span>
+              <span class="template-desc">🔥 9:16 YT Hindi (Film Burn Intro)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="master_lyrics" id="btn-template-master-lyrics">
+              <span class="template-num" style="background: #111111; color: #FFFFFF; font-family: 'Georgia', serif; font-weight: 700; letter-spacing: 0.03em;">Master</span>
+              <span class="template-desc">📜 9:16 Master Lyric (Aesthetic Card)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="c19_nokia" id="btn-template-c19-nokia">
+              <span class="template-num" style="background: #b40000; color: #FFFFFF; font-family: monospace; font-weight: 800; letter-spacing: 0.05em;">Nokia</span>
+              <span class="template-desc">🟥 1:1 C19 Nokia (Retro Phone Screen)</span>
+            </button>
+            <button type="button" class="template-pill" data-template="spotify_card" id="btn-template-spotify-card">
+              <span class="template-num" style="background: #1ed760; color: #000000; font-weight: 900;">Spotify Card</span>
+              <span class="template-desc">🎴 Spotify Lyrics Card</span>
+            </button>
+            <button type="button" class="template-pill" data-template="yt_music_card" id="btn-template-yt-music-card">
+              <span class="template-num" style="background: #ff0000; color: #FFFFFF; font-weight: 900;">YT Music</span>
+              <span class="template-desc">🔴 YouTube Music Lyrics Card</span>
+            </button>
+            <button type="button" class="template-pill" data-template="genius_card" id="btn-template-genius-card">
+              <span class="template-num" style="background: #FFFF64; color: #000000; font-weight: 900;">Genius</span>
+              <span class="template-desc">🟡 Genius Lyrics Card</span>
+            </button>
+            <button type="button" class="template-pill" data-template="apple_music_card" id="btn-template-apple-music-card">
+              <span class="template-num" style="background: #FA243C; color: #FFFFFF; font-weight: 900;">Apple Music</span>
+              <span class="template-desc">🍎 Apple Music Lyrics Card</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Lyrics Card Studio (Spotify, YouTube Music, Genius & Apple Music Pipeline) -->
+        <div class="spotify-card-studio" id="spotify-card-studio" style="display: none;">
+          <div class="spotify-card-studio-header">
+            <div class="spotify-card-title-group">
+              <span class="control-label" id="card-studio-brand-header" style="display: flex; align-items: center; gap: 8px;">
+                <span id="card-studio-brand-icon">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="#1ed760">
+                    <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12C24 5.373 18.627 0 12 0zm5.502 17.308c-.217.355-.679.467-1.034.25-2.836-1.733-6.407-2.124-10.612-1.163-.404.093-.807-.162-.9-.567-.093-.404.163-.807.568-.9 4.606-1.052 8.562-.607 11.728 1.346.355.217.467.679.25 1.034zm1.47-3.268c-.273.444-.855.584-1.299.311-3.245-1.995-8.192-2.573-12.03-1.407-.497.151-1.026-.135-1.177-.633-.151-.498.136-1.026.634-1.177 4.385-1.332 9.839-.687 13.561 1.606.444.274.584.856.311 1.3zm.126-3.41c-3.89-2.31-10.309-2.523-14.032-1.392-.596.182-1.229-.161-1.411-.758-.181-.597.162-1.229.759-1.411 4.283-1.3 11.37-1.055 15.827 1.591.536.318.71 1.011.392 1.547-.318.536-1.01.71-1.546.392z"/>
+                  </svg>
+                </span>
+                <span id="card-studio-title-text">Spotify Lyrics Card Studio</span>
+              </span>
+              <p class="spotify-card-subtitle" id="card-studio-subtitle">Exact streaming layout with blurred cover, customizable tint, interactive lyrics, framing, and 4K high-DPI export.</p>
+            </div>
+            <div class="spotify-card-actions">
+              <button type="button" id="spotify-card-fetch-btn" class="generate-btn" style="padding: 8px 18px; font-size: 0.88rem;">
+                <span>Fetch Track Lyrics</span>
+              </button>
+              <button type="button" id="spotify-card-download-btn" class="generate-btn" style="background: linear-gradient(135deg, #1ed760, #1db954); color: #000; font-weight: 800; padding: 8px 20px; font-size: 0.88rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Download Card (High-DPI PNG)</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="spotify-card-status" id="spotify-card-status">Enter a Spotify link or song query above, then click Fetch Track Lyrics.</div>
+
+          <!-- Studio Main Layout: Live Card Preview + Settings & Lines Selector -->
+          <div class="spotify-card-main-grid">
+            <!-- Left / Center: The Live Preview Frame -->
+            <div class="spotify-card-preview-container">
+              <div class="spotify-card-preview-header">
+                <span class="preview-badge">LIVE PREVIEW</span>
+                <span style="font-size: 11px; color: var(--text-muted);">Text elements are directly editable on the card</span>
+              </div>
+              <div class="spotify-card-stage" id="spotify-card-stage">
+                <!-- Outer backdrop container (for Instagram carousel framing / backdrop) -->
+                <div class="spotify-template-canvas" id="additional-bg-preview">
+                  <!-- The Exact LyricPost / Genius DOM Layout -->
+                  <div class="song-image-wrap" id="song-image-wrap">
+                    <div class="song-image layout-spotify spotify-tag" id="song-image">
+                      <!-- Genius Mode Inner Container (Main Cover Background) -->
+                      <div class="genius-inner" id="genius-inner" style="display: none;">
+                        <div class="genius-quote" id="genius-quote">
+                          <img src="quote.svg" alt="Quote" />
+                        </div>
+                        <div class="lyrics" id="genius-lyrics" contenteditable="true" spellcheck="false">
+                          <div class="lyric-line"><span class="lyric-highlight">Fell on my face and awoke</span></div>
+                          <div class="lyric-line"><span class="lyric-highlight">with a scar, another</span></div>
+                          <div class="lyric-line"><span class="lyric-highlight">mistake livin' deep in my</span></div>
+                          <div class="lyric-line"><span class="lyric-highlight">heart</span></div>
+                        </div>
+                      </div>
+
+                      <!-- Apple Music Mode Inner Container (1:1 with imshahab/lyricisticality) -->
+                      <div class="apple-music-inner" id="apple-music-inner" style="display: none;">
+                        <div class="lyrics apple-music-lyrics" id="apple-music-lyrics" contenteditable="true" spellcheck="false">
+                          <div class="lyric-line">Fell on my face and awoke</div>
+                          <div class="lyric-line">with a scar, another</div>
+                          <div class="lyric-line">mistake livin' deep in my heart</div>
+                        </div>
+                        <div class="song-info apple-music-song-info" id="apple-music-song-info">
+                          <img id="apple-music-cover" class="cover-loaded" src="/api/proxy-image?url=https%3A%2F%2Fupload.wikimedia.org%2Fwikipedia%2Fen%2F5%2F51%2FKendrickLamarGoodKidmMADCity.jpg" alt="album-cover" crossorigin="anonymous" />
+                          <div class="track-meta">
+                            <div class="track-name" id="apple-music-name" contenteditable="true" spellcheck="false">Bitch, Don’t Kill My Vibe</div>
+                            <div class="track-artist" id="apple-music-authors" contenteditable="true" spellcheck="false">Kendrick Lamar</div>
+                          </div>
+                          <div class="apple-music-brand-tag" id="apple-music-brand-tag">
+                            <img src="apple_music_logo.svg" alt="Apple Music" style="width: 22px; height: 22px; display: block;" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Spotify / YT Music Mode Header -->
+                      <div class="header" id="song-image-header">
+                        <img id="song-image-cover" class="cover-loaded" src="/api/proxy-image?url=https%3A%2F%2Fupload.wikimedia.org%2Fwikipedia%2Fen%2F5%2F51%2FKendrickLamarGoodKidmMADCity.jpg" alt="album-cover" crossorigin="anonymous" />
+                        <div>
+                          <div class="name" id="song-image-name" contenteditable="true" spellcheck="false">Bitch, Don’t Kill My Vibe</div>
+                          <div class="authors" id="song-image-authors" contenteditable="true" spellcheck="false">Kendrick Lamar</div>
+                        </div>
+                      </div>
+                      <div class="lyrics" id="song-image-lyrics" contenteditable="true" spellcheck="false">Fell on my face and awoke
+with a scar, another
+mistake livin' deep in my
+heart
+Wear it on top of my sleeve
+in a flick, I can admit that it
+did look like yours</div>
+                      <!-- Spotify / YT Music Bottom Logo -->
+                      <div class="spotify" id="song-image-spotify-footer">
+                        <img id="song-image-tag" src="spotify_logo_white.svg" alt="Spotify" style="height: 1.85rem; width: auto; max-height: 2.2rem; display: block;" />
+                      </div>
+
+                      <!-- Genius Bottom Banner Footer -->
+                      <div class="genius-footer" id="genius-footer" style="display: none;">
+                        <div class="genius-meta" id="genius-footer-meta" contenteditable="true" spellcheck="false">KENDRICK LAMAR, "BITCH, DON'T KILL MY VIBE"</div>
+                        <img class="genius-logo-img" id="genius-footer-logo" src="genius_logo.svg" alt="Genius" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Controls & Lyrics Line Selector -->
+            <div class="spotify-card-sidebar">
+              <!-- Text Color Toggle: White vs Black -->
+              <div class="spotify-card-control-box">
+                <span class="control-label" style="font-size: 13px;">✍️ Text Color:</span>
+                <div class="spotify-card-text-color-group">
+                  <button type="button" id="spotify-card-text-white-btn" class="spotify-text-toggle-btn" data-text-color="white" title="Light Text (#f0f0f0)">
+                    <span class="color-dot" style="background: #ffffff; border: 1px solid rgba(0,0,0,0.2);"></span>
+                    <span>⚪ White Text</span>
+                  </button>
+                  <button type="button" id="spotify-card-text-black-btn" class="spotify-text-toggle-btn active" data-text-color="black" title="Dark Text (#181818, Like light-mode-3.png)">
+                    <span class="color-dot" style="background: #000000; border: 1px solid rgba(255,255,255,0.3);"></span>
+                    <span>⚫ Black Text</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Color Palettes for Card (Primary) & Canvas (Secondary) -->
+              <div class="spotify-card-control-box">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span class="control-label" style="font-size: 13px;">🎨 Card Color (Dominant):</span>
+                  <div class="custom-color-picker-wrapper" style="display: inline-flex; align-items: center; gap: 4px;">
+                    <input type="color" id="spotify-card-custom-color" value="#4884ab" style="width: 24px; height: 24px; border: none; border-radius: 50%; cursor: pointer; background: transparent; padding: 0;" title="Custom Card Color">
+                  </div>
+                </div>
+                <div class="spotify-card-swatches" id="spotify-card-swatches">
+                  <button type="button" class="spotify-swatch-btn active" data-color="#4884ab" style="background: #4884ab;" title="Figma Kendrick Blue (#4884ab)"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#008fd1" style="background: #008fd1;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#549aab" style="background: #549aab;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#8fc00c" style="background: #8fc00c;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#729962" style="background: #729962;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#a2904e" style="background: #a2904e;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#cd6800" style="background: #cd6800;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#fc302f" style="background: #fc302f;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#d6337b" style="background: #d6337b;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#7b52ab" style="background: #7b52ab;"></button>
+                  <button type="button" class="spotify-swatch-btn" data-color="#181818" style="background: #181818;"></button>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);">
+                  <span class="control-label" style="font-size: 13px; margin: 0;">🖼️ Canvas Background (Secondary):</span>
+                  <div class="custom-color-picker-wrapper" style="display: inline-flex; align-items: center; gap: 6px;">
+                    <input type="color" id="spotify-card-secondary-color" value="#437795" style="width: 24px; height: 24px; border: none; border-radius: 50%; cursor: pointer; background: transparent; padding: 0;" title="Custom Canvas Secondary Color">
+                    <span id="spotify-card-secondary-val" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">#437795</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sliders Box -->
+              <div class="spotify-card-control-box">
+                <div class="spotify-slider-row">
+                  <label for="spotify-card-fontsize-slider">🔤 Lyric Font Size: <span id="spotify-card-fontsize-val" class="ypos-badge">20px</span></label>
+                  <input type="range" id="spotify-card-fontsize-slider" min="15" max="32" value="20" step="1" />
+                </div>
+                <div class="spotify-slider-row">
+                  <label for="spotify-card-radius-slider">📐 Card Corner Radius: <span id="spotify-card-radius-val" class="ypos-badge">20px</span></label>
+                  <input type="range" id="spotify-card-radius-slider" min="8" max="36" value="20" step="2" />
+                </div>
+                <div class="spotify-slider-row">
+                  <label for="spotify-card-width-slider">📏 Card Width (%): <span id="spotify-card-width-val" class="ypos-badge">88%</span></label>
+                  <input type="range" id="spotify-card-width-slider" min="75" max="96" value="88" step="1" />
+                </div>
+                <div class="spotify-slider-row">
+                  <label for="spotify-card-blur-slider">🌫️ Background Blur: <span id="spotify-card-blur-val" class="ypos-badge">30px</span></label>
+                  <input type="range" id="spotify-card-blur-slider" min="0" max="60" value="30" step="2" />
+                </div>
+              </div>
+
+              <!-- Template Frame & Backdrop Box -->
+              <div class="spotify-card-control-box">
+                <span class="control-label" style="font-size: 13px;">🖼️ Template Canvas & Framing:</span>
+                <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 6px;">
+                  <div id="spotify-card-backdrop-options" style="display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 12px; color: var(--text-muted); min-width: 80px;">Frame Ratio:</span>
+                      <select id="spotify-card-frame-ratio" class="custom-studio-input" style="font-size: 12px; padding: 4px 8px;">
+                        <option value="9:16" selected>9:16 Story / Reel (1080×1920)</option>
+                        <option value="1:1">1:1 Square Post (1080×1080)</option>
+                        <option value="4:5">4:5 Instagram Portrait (1080×1350)</option>
+                        <option value="card_only">Card Only (No Outer Frame)</option>
+                      </select>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <span style="font-size: 12px; color: var(--text-muted); min-width: 80px;">Backdrop:</span>
+                      <select id="spotify-card-backdrop-style" class="custom-studio-input" style="font-size: 12px; padding: 4px 8px;">
+                        <option value="card_tint" selected>Matching Color (Spotify Native)</option>
+                        <option value="blurred_cover">Blurred Album Cover</option>
+                        <option value="dark">Dark Canvas (#121212)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Synced Lyrics Lines Selector -->
+              <div class="spotify-card-control-box" id="spotify-card-lines-box">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <span class="control-label" style="font-size: 13px;">📝 Synced Lyrics Lines:</span>
+                  <div style="display: flex; gap: 6px;">
+                    <button type="button" id="spotify-card-clear-lyrics-btn" class="mini-btn" style="font-size: 11px; padding: 2px 8px;">Clear</button>
+                    <button type="button" id="spotify-card-sample-lyrics-btn" class="mini-btn" style="font-size: 11px; padding: 2px 8px;">Top 4</button>
+                  </div>
+                </div>
+                <div id="spotify-card-lines-list" class="spotify-card-lines-list">
+                  <div style="font-size: 12px; color: var(--text-muted); padding: 8px; text-align: center;">
+                    No lines loaded yet. Click "Fetch Track Lyrics" above.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-row" id="master-lyrics-variant-row" style="display: none;">
+          <span class="control-label">🎼 Master Variation:</span>
+          <select id="master-lyrics-variant-select" class="custom-studio-input" style="max-width: 260px;">
+            <option value="default">Current</option>
+            <option value="zmusic">Z Music</option>
+          </select>
+        </div>
+
+        <div class="control-row" id="yt-hindi-variant-row" style="display: none;">
+          <span class="control-label">🎬 YT Hindi Variation:</span>
+          <select id="yt-hindi-variant-select" class="custom-studio-input" style="max-width: 260px;">
+            <option value="standard">Standard</option>
+            <option value="film_burn">Film Burn</option>
+          </select>
+        </div>
+
+        <!-- C19 Nokia Screen Color Palette & Controls -->
+        <div class="control-row" id="nokia-options-row" style="display: none;">
+          <span class="control-label">📟 Screen Color:</span>
+          <div class="nokia-palettes-group" id="nokia-palettes-group">
+            <button type="button" class="nokia-swatch-btn active" data-color="#b40000" title="Retro Red Screen (Default)">
+              <span class="swatch-circle" style="background: #b40000; border: 2px solid #5a0000;"></span>
+              <span class="swatch-name">Retro Red</span>
+            </button>
+            <button type="button" class="nokia-swatch-btn" data-color="#c3d18e" title="Classic Nokia 3310 Green">
+              <span class="swatch-circle" style="background: #c3d18e; border: 2px solid #2d3b10;"></span>
+              <span class="swatch-name">3310 Green</span>
+            </button>
+            <button type="button" class="nokia-swatch-btn" data-color="#6ec5d8" title="Backlight Cyan Blue">
+              <span class="swatch-circle" style="background: #6ec5d8; border: 2px solid #144450;"></span>
+              <span class="swatch-name">Cyan Blue</span>
+            </button>
+            <button type="button" class="nokia-swatch-btn" data-color="#e8a838" title="Retro Amber Orange">
+              <span class="swatch-circle" style="background: #e8a838; border: 2px solid #482f05;"></span>
+              <span class="swatch-name">Amber</span>
+            </button>
+            <button type="button" class="nokia-swatch-btn" data-color="#d2dad2" title="Silver White Matrix">
+              <span class="swatch-circle" style="background: #d2dad2; border: 2px solid #333333;"></span>
+              <span class="swatch-name">Silver LCD</span>
+            </button>
+            <div class="custom-color-picker-wrapper" style="display: inline-flex; align-items: center; gap: 6px; margin-left: 6px;">
+              <input type="color" id="nokia-custom-color" value="#b40000" style="width: 28px; height: 28px; border: none; border-radius: 50%; cursor: pointer; background: transparent; padding: 0;">
+              <span style="font-size: 11px; color: var(--text-muted, #888); font-weight: 500;">Custom</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- C19 Nokia Stickers Controls -->
+        <div class="control-row" id="nokia-stickers-row" style="display: none; align-items: center; gap: 14px; flex-wrap: wrap; background: rgba(255,255,255,0.03); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border-color, #2a2a2a); margin-top: 6px;">
+          <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-weight: 600; font-size: 13px;">
+            <input type="checkbox" id="nokia-stickers-toggle" style="cursor: pointer; width: 18px; height: 18px; accent-color: #ff3b5c;">
+            <span style="color: #fff;">✨ Header Stickers</span>
+          </label>
+          <div id="nokia-sticker-select-group" style="display: inline-flex; align-items: center; gap: 8px;">
+            <span class="control-label" style="font-size: 12px; margin: 0; color: var(--text-muted, #aaa);">Choose Sticker:</span>
+            <select id="nokia-sticker-select" class="form-select custom-studio-input" style="font-size: 13px; padding: 6px 12px; border-radius: 6px; background: var(--bg-card, #1e1e1e); color: var(--text-main, #fff); border: 1px solid var(--border-color, #333); cursor: pointer; min-width: 170px;">
+              <option value="random">🎲 Random</option>
+            </select>
+          </div>
+          <span style="font-size: 11px; color: var(--text-muted, #777);">(Places sticker in center of top status bar)</span>
+        </div>
+
+        <!-- Brat Aesthetic Palette & Live Reflow Sandbox (Appears for Brat Template) -->
+        <div class="control-row" id="brat-options-row" style="display: none;">
+          <span class="control-label">🟩 Brat Theme:</span>
+          <div class="brat-palettes-group" id="brat-palettes-group">
+            <button type="button" class="brat-swatch-btn active" data-theme="green" title="Classic Brat Lime">
+              <span class="swatch-circle" style="background: #8ACE00; border: 2px solid #000;"></span>
+              <span class="swatch-name">Brat Lime</span>
+            </button>
+            <button type="button" class="brat-swatch-btn" data-theme="white" title="Brat White (Deluxe)">
+              <span class="swatch-circle" style="background: #FFFFFF; border: 2px solid #000;"></span>
+              <span class="swatch-name">Brat White</span>
+            </button>
+            <button type="button" class="brat-swatch-btn" data-theme="blue" title="SWEAT Tour (Cobalt Blue / Red)">
+              <span class="swatch-circle" style="background: #0A00AD; border: 2px solid #DE0100;"></span>
+              <span class="swatch-name">SWEAT Tour</span>
+            </button>
+            <button type="button" class="brat-swatch-btn" data-theme="strike" title="Brat Strike (Remix)">
+              <span class="swatch-circle" style="background: #8ACE00; border: 2px solid #000; text-decoration: line-through;">—</span>
+              <span class="swatch-name">Strike Remix</span>
+            </button>
+            <button type="button" class="brat-swatch-btn" data-theme="red" title="The Moment (Red / Blue)">
+              <span class="swatch-circle" style="background: #FF0000; border: 2px solid #0000FF;"></span>
+              <span class="swatch-name">The Moment</span>
+            </button>
+            <button type="button" class="brat-swatch-btn" data-theme="black" title="Brat Black">
+              <span class="swatch-circle" style="background: #000000; border: 2px solid #FFF;"></span>
+              <span class="swatch-name">Brat Black</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- YT Hindi Type: Top Header Input (shown only for yt_hindi_type template) -->
+        <div class="control-row" id="yt-hindi-options-row" style="display: none;">
+          <span class="control-label">✍️ Top Header:</span>
+          <div style="flex: 1;">
+            <input type="text" id="yt-hindi-top-header-input" class="custom-studio-input" style="width: 100%; max-width: 520px; font-family: 'Georgia', serif; font-style: italic; font-size: 0.95rem; letter-spacing: 0.02em;"
+              placeholder="Leave blank to pick random from headers.txt, or enter custom header..." value="" />
+            <p style="margin: 0.35rem 0 0; font-size: 0.72rem; color: var(--text-muted);">Displayed in Georgia Italic in the top margin. Leave blank to pick randomly from headers.txt.</p>
+          </div>
+        </div>
+
+        <!-- YT Hindi Intro Text Input (shown only for yt_hindi_intro template) -->
+        <div class="control-row" id="yt-hindi-intro-options-row" style="display: none;">
+          <span class="control-label">🎬 Intro Text:</span>
+          <div style="flex: 1;">
+            <input type="text" id="yt-hindi-intro-text-input" class="custom-studio-input" style="width: 100%; max-width: 520px; font-family: 'Georgia', serif; font-style: italic; font-size: 0.95rem; letter-spacing: 0.02em;"
+              placeholder="Leave blank to pick random from intro_headers.txt, or enter custom intro..." value="" />
+            <p style="margin: 0.35rem 0 0; font-size: 0.72rem; color: var(--text-muted);">Displays centered during the film burn intro with smooth fade in/out. Leave blank to pick randomly from intro_headers.txt.</p>
+          </div>
+        </div>
+
+        <!-- Background Video Folders Selector (Shown for YT Hindi & cinematic video templates) -->
+        <div class="control-row" id="bg-folders-options-row" style="display: none;">
+          <span class="control-label">📁 Video Folders:</span>
+          <div class="bg-folders-container" style="flex: 1;">
+            <div class="bg-folders-header">
+              <span style="font-size: 0.76rem; color: var(--text-muted);" id="bg-folders-count-label">Select folder(s) for background clips:</span>
+              <div class="bg-folders-actions">
+                <button type="button" id="bg-folders-toggle-all-btn" class="bg-folder-action-btn">Select All</button>
+                <button type="button" id="bg-folders-clear-btn" class="bg-folder-action-btn">Clear</button>
+              </div>
+            </div>
+            <div class="bg-folders-pills-group" id="bg-folders-group">
+              <span style="font-size: 0.75rem; color: var(--text-muted);">Loading background video folders...</span>
+            </div>
+            <p style="margin: 0.35rem 0 0; font-size: 0.72rem; color: var(--text-muted);">
+              Choose specific aesthetic video folder(s) inside <code>videos/input/</code>. Multiple folders can be active simultaneously.
+            </p>
+          </div>
+        </div>
+
+        <!-- Brat Live Reflow Sandbox Card (Interactive 1:1 Live Canvas) -->
+        <div class="brat-live-sandbox" id="brat-live-sandbox" style="display: none;">
+          <div class="sandbox-header">
+            <div class="sandbox-title">
+              <span class="sandbox-badge">1:1 LIVE CANVAS</span>
+              <span>Charli XCX "Brat" Real-Time Reflow Preview</span>
+            </div>
+            <span class="sandbox-hint">Type or watch lyrics dynamically wrap &amp; re-center</span>
+          </div>
+          <div class="brat-canvas-wrapper" id="brat-canvas-wrapper">
+            <div class="brat-stage">
+              <div class="brat-box-container brat-container theme-brat-green casing-upper" id="brat-live-container">
+                <span class="brat-text-box" id="brat-live-text">365 PARTYGIRL</span>
+              </div>
+            </div>
+          </div>
+          <div class="sandbox-input-bar">
+            <div class="brat-input-row">
+              <input type="text" id="brat-sandbox-input" class="brat-input-field" placeholder="Type words here to test live dynamic reflow scaling..." value="365 PARTYGIRL" />
+              <button type="button" id="brat-bold-toggle-btn" class="brat-bold-btn" title="Toggle Bold / Regular Weight">BOLD</button>
+              <button type="button" id="brat-casing-toggle-btn" class="brat-casing-btn active" title="Toggle 100% Lowercase / Raw Uppercase">UPPERCASE</button>
+            </div>
+            <div class="brat-chips-row">
+              <span style="font-size: 0.72rem; color: var(--text-muted);">Presets:</span>
+              <button type="button" class="brat-chip-btn active" data-preset="365 PARTYGIRL" data-theme="green" data-casing="upper" data-song="Charli XCX - 365">365 PARTYGIRL</button>
+              <button type="button" class="brat-chip-btn" data-preset="brat and it's the same but there's three more songs so it's not" data-theme="white" data-casing="lower" data-song="Charli XCX - 365">DELUXE EDITION</button>
+              <button type="button" class="brat-chip-btn" data-preset="SWEAT" data-theme="blue" data-casing="upper" data-bold="true" data-song="Charli XCX, Troye Sivan - Sweat">SWEAT TOUR</button>
+              <button type="button" class="brat-chip-btn" data-preset="THE MOMENT" data-theme="red" data-casing="upper" data-song="Charli XCX - 360">THE MOMENT</button>
+              <button type="button" class="brat-chip-btn" data-preset="CLUB CLASSICS" data-theme="green" data-casing="upper" data-song="Charli XCX - Club classics">CLUB CLASSICS</button>
+              <button type="button" class="brat-chip-btn" data-preset="SYMPATHY IS A KNIFE" data-theme="green" data-casing="upper" data-song="Charli XCX - Sympathy is a knife">SYMPATHY IS A KNIFE</button>
+              <button type="button" class="brat-chip-btn" data-preset="TALK TALK" data-theme="green" data-casing="upper" data-song="Charli XCX - Talk talk">TALK TALK</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Typography / Font Selection -->
+        <div class="control-row">
+          <span class="control-label">🔤 Font / Style:</span>
+          <div class="pill-group font-pill-group" id="font-group">
+            <button type="button" class="pill-btn font-pill active" data-font="Arial Narrow" style="font-family: 'Arial Narrow', sans-serif; font-weight: 500;">Arial Narrow (Brat)</button>
+            <button type="button" class="pill-btn font-pill" data-font="Impact" style="font-family: Impact, sans-serif;">Impact (Bold)</button>
+            <button type="button" class="pill-btn font-pill" data-font="Times New Roman" style="font-family: 'Times New Roman', Times, serif;">Times Roman (Prompt)</button>
+            <button type="button" class="pill-btn font-pill" data-font="Montserrat" style="font-family: Montserrat, sans-serif;">Montserrat</button>
+            <button type="button" class="pill-btn font-pill" data-font="Arial" style="font-family: Arial, sans-serif;">Arial</button>
+            <button type="button" class="pill-btn font-pill" data-font="Georgia" style="font-family: Georgia, serif;">Georgia</button>
+            <button type="button" class="pill-btn font-pill" data-font="Courier New" style="font-family: 'Courier New', monospace;">Courier</button>
+            <button type="button" class="pill-btn font-pill" data-font="Silkscreen" style="font-family: 'Silkscreen', monospace;">Silkscreen (Nokia)</button>
+          </div>
+          <div class="custom-input-wrapper">
+            <input type="text" id="custom-font-input" class="custom-studio-input" placeholder="Custom font (e.g. Bebas Neue)..." />
+          </div>
+        </div>
+
+        <!-- Subtitle Language Selection -->
+        <div class="control-row">
+          <span class="control-label">🌐 Language:</span>
+          <div class="pill-group" id="lang-group">
+            <button type="button" class="pill-btn lang-pill active" data-lang="auto">🌐 Auto / Native</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="pa">🇮🇳 Punjabi (Hinglish)</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="en">🇺🇸 English</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="hi">🇮🇳 Hindi (Hinglish)</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="es">🇪🇸 Spanish</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="fr">🇫🇷 French</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="de">🇩🇪 German</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="ja">🇯🇵 Japanese</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="ko">🇰🇷 Korean</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="pt">🇧🇷 Portuguese</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="it">🇮🇹 Italian</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="zh">🇨🇳 Chinese</button>
+            <button type="button" class="pill-btn lang-pill" data-lang="ru">🇷🇺 Russian</button>
+          </div>
+          <div class="custom-input-wrapper" style="max-width: 170px;">
+            <input type="text" id="custom-lang-input" class="custom-studio-input" placeholder="ISO (e.g. ar, tr)..." />
+          </div>
+        </div>
+
+        <!-- Dynamic Lyric Placement & Font Size Controls (Realtime) -->
+        <div class="control-row">
+          <span class="control-label">📍 Placement &amp; Size:</span>
+          <div class="pill-group" id="placement-group">
+            <button type="button" class="pill-btn placement-pill" data-placement="top" data-ypos="20">⬆️ Top</button>
+            <button type="button" class="pill-btn placement-pill active" data-placement="center" data-ypos="50" data-xpos="50">🎯 Center</button>
+            <button type="button" class="pill-btn placement-pill" data-placement="bottom" data-ypos="80">⬇️ Bottom</button>
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="xpos-slider" class="slider-label">Horizontal (X): <span id="xpos-val" class="ypos-badge">50% (Center)</span></label>
+            <input type="range" id="xpos-slider" class="ypos-range" min="10" max="90" value="50" step="1" />
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="ypos-slider" class="slider-label">Vertical (Y): <span id="ypos-val" class="ypos-badge">50% (Center)</span></label>
+            <input type="range" id="ypos-slider" class="ypos-range" min="10" max="90" value="50" step="1" />
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="fontsize-slider" class="slider-label">Text Size: <span id="fontsize-val" class="ypos-badge">72px (Auto)</span></label>
+            <input type="range" id="fontsize-slider" class="ypos-range" min="28" max="140" value="72" step="2" />
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="blur-slider" class="slider-label">🌫️ Blur Meter: <span id="blur-val" class="ypos-badge">3.2px</span></label>
+            <input type="range" id="blur-slider" class="ypos-range" min="0" max="10" value="3.2" step="0.2" />
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="spacing-slider" class="slider-label">📐 Letter Spacing: <span id="spacing-val" class="ypos-badge">-1px (Default)</span></label>
+            <input type="range" id="spacing-slider" class="ypos-range" min="-5" max="25" value="-1" step="1" />
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="word-spacing-slider" class="slider-label">🔤 Word Spacing: <span id="word-spacing-val" class="ypos-badge">0px (Default)</span></label>
+            <input type="range" id="word-spacing-slider" class="ypos-range" min="-10" max="40" value="0" step="1" />
+          </div>
+        </div>
+        <!-- Instagram Viral Hook / Timing Selection -->
+        <div class="control-row timing-control-row" id="viral-hooks-row">
+          <span class="control-label">🔥 Viral Hook:</span>
+          <div class="viral-hook-select-wrapper" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1;">
+            <select id="viral-hook-select" class="custom-studio-input" style="min-width: 250px; flex: 1; max-width: 400px; font-weight: 600;">
+              <option value="full">🎵 Full Song (Default)</option>
+              <option value="custom">⏱️ Custom Range</option>
+            </select>
+            <button type="button" id="fetch-hooks-btn" class="pill-btn" style="background: linear-gradient(135deg, #e1306c, #f77737); color: #fff; font-weight: 700; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer;">
+              🔍 Fetch IG Hooks
+            </button>
+            <button type="button" id="ig-login-btn" class="pill-btn" style="display: none; background: #3897f0; color: #fff; font-weight: 700; border: none; padding: 6px 14px; border-radius: 8px; cursor: pointer;">
+              🔑 Open Chrome & Login
+            </button>
+            <span id="ig-status-badge" class="badge badge-subtle" style="font-size: 11px;">IG Status: Checking...</span>
+          </div>
+        </div>
+
+        <div class="control-row timing-control-row">
+          <span class="control-label">Test Range:</span>
+          <div class="placement-slider-wrap">
+            <label for="test-start-input" class="slider-label">Start (seconds or mm:ss)</label>
+            <input type="text" id="test-start-input" class="custom-studio-input" value="0" placeholder="0 or 00:00" />
+          </div>
+          <div class="placement-slider-wrap">
+            <label for="test-end-input" class="slider-label">End (seconds or mm:ss)</label>
+            <input type="text" id="test-end-input" class="custom-studio-input" placeholder="Full song or 01:30" />
+          </div>
+          <span class="slider-label">Leave End blank for the full song.</span>
+        </div>
+        <div class="control-row timing-control-row">
+          <span class="control-label">Preview Quality:</span>
+          <select id="preview-quality-input" class="custom-studio-input" style="max-width: 220px;">
+            <option value="fast">Fast — 540×960 · 24 FPS</option>
+            <option value="final" selected>Final — 1080×1920 · 30 FPS</option>
+          </select>
+          <span class="slider-label">Fast uses ultrafast CPU encoding when no GPU encoder is available.</span>
+        </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Parallel Pipeline Progress Box (Hidden until triggered) -->
+    <section id="pipeline-section" class="pipeline-section" style="display: none;">
+      <div class="pipeline-header">
+        <div class="pipeline-title-box">
+          <div class="pulse-dot"></div>
+          <h3 id="pipeline-status-text">Running YouTube Generation Pipeline...</h3>
+        </div>
+        <span id="pipeline-percent-badge" class="badge badge-accent">0%</span>
+      </div>
+
+      <!-- Main Progress Bar -->
+      <div class="progress-bar-track">
+        <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%;"></div>
+      </div>
+
+      <!-- 4-Step Concurrent Grid -->
+      <div class="pipeline-steps-grid">
+        <!-- Step 1 -->
+        <div class="step-card" id="step-audio">
+          <div class="step-icon-wrap">🎧</div>
+          <div class="step-card-content">
+            <span class="step-label">Task A (yt-dlp Audio)</span>
+            <strong class="step-name">YouTube MP3 Extraction</strong>
+            <p class="step-detail" id="step-audio-detail">Waiting to start...</p>
+          </div>
+          <div class="step-status-indicator" id="step-audio-status">⏳</div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="step-card" id="step-lyrics">
+          <div class="step-icon-wrap">📝</div>
+          <div class="step-card-content">
+            <span class="step-label">Task B (yt-dlp Subtitles)</span>
+            <strong class="step-name">Captions &amp; CC Stream</strong>
+            <p class="step-detail" id="step-lyrics-detail">Waiting to start...</p>
+          </div>
+          <div class="step-status-indicator" id="step-lyrics-status">⏳</div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="step-card" id="step-ass">
+          <div class="step-icon-wrap">🎨</div>
+          <div class="step-card-content">
+            <span class="step-label">Step 2 (VTT to ASS)</span>
+            <strong class="step-name">1080p ASS Styler</strong>
+            <p class="step-detail" id="step-ass-detail">Waiting...</p>
+          </div>
+          <div class="step-status-indicator" id="step-ass-status">⏳</div>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="step-card" id="step-ffmpeg">
+          <div class="step-icon-wrap">🎬</div>
+          <div class="step-card-content">
+            <span class="step-label">Step 3 (FFmpeg)</span>
+            <strong class="step-name">Transparent WebM</strong>
+            <p class="step-detail" id="step-ffmpeg-detail">Waiting...</p>
+          </div>
+          <div class="step-status-indicator" id="step-ffmpeg-status">⏳</div>
+        </div>
+      </div>
+
+      <!-- Live Terminal Console Log -->
+      <div class="console-box">
+        <div class="console-header">
+          <span>Terminal Pipeline Output</span>
+          <span id="console-line-count">0 lines</span>
+        </div>
+        <div id="console-stream" class="console-stream">
+          <!-- Live log lines -->
+        </div>
+      </div>
+
+      <section id="generation-metrics" class="generation-metrics" hidden>
+        <div class="metrics-header">
+          <div>
+            <span class="step-label">Render diagnostics</span>
+            <h4>Optimization Metrics</h4>
+          </div>
+          <span class="metrics-note">Measured for this generation</span>
+        </div>
+        <div id="generation-metrics-grid" class="generation-metrics-grid"></div>
+      </section>
+    </section>
+
+    <!-- Studio Stage: Video Output & Live Preview -->
+    <section id="studio-stage" class="studio-stage" style="display: none;">
+      <div class="stage-topbar">
+        <div>
+          <span class="badge badge-accent">✨ Output Ready</span>
+          <h2 id="stage-song-title" class="stage-title">Song Title</h2>
+          <p id="stage-song-meta" class="stage-meta">1080p 30fps VP9 yuva420p Transparent Overlay</p>
+        </div>
+
+        <!-- Transparency Backdrop Switcher -->
+        <div class="backdrop-switcher">
+          <span class="switcher-label">Preview Backdrop:</span>
+          <button class="backdrop-btn" data-bg="brat" title="Charli XCX Brat Lime">🟩 Brat</button>
+          <button class="backdrop-btn active" data-bg="checkerboard" title="Checkerboard (Alpha Transparency)">🏁 Alpha</button>
+          <button class="backdrop-btn" data-bg="cyberpunk" title="Cyberpunk Gradient">🌌 Cyber</button>
+          <button class="backdrop-btn" data-bg="city" title="Night City Wallpaper">🌆 City</button>
+          <button class="backdrop-btn" data-bg="green" title="Green Screen">🟩 Green</button>
+          <button class="backdrop-btn" data-bg="black" title="OLED Black">⬛ Black</button>
+        </div>
+      </div>
+
+      <div class="stage-content-grid">
+        <!-- Left: Video Canvas Container -->
+        <div class="video-preview-wrapper" id="video-preview-wrapper">
+          <div class="video-backdrop backdrop-black" id="video-backdrop">
+            <video id="output-video-player" class="output-video-player" controls autoplay playsinline loop>
+              <source id="video-source" src="" type="video/mp4">
+              Your browser does not support the video tag.
+            </video>
+          </div>
+        </div>
+
+        <!-- Right: Teleprompter & Downloads Panel -->
+        <aside class="stage-sidebar">
+          <!-- Download Buttons -->
+          <div class="download-card">
+            <h4 class="download-card-title">Download Assets</h4>
+            <div class="download-buttons-stack">
+              <a id="dl-video-btn" href="#" download class="btn-download-primary" style="justify-content: center; padding: 0.85rem 1rem;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>⬇️ Download 1080p MP4 Video</span>
+              </a>
+
+              <button type="button" id="schedule-to-hub-btn" class="btn-download-primary" style="background: linear-gradient(135deg, #e7ff56, #c5e025); color: #000; font-weight: 800; border: none; cursor: pointer; justify-content: center; padding: 0.85rem 1rem;">
+                <span>📅 Schedule to Metricool Hub</span>
+              </button>
+
+              <div class="mini-dl-grid">
+                <a id="dl-ass-btn" href="#" download class="btn-download-subtle">
+                  <span>📥 .ASS Subtitles</span>
+                </a>
+                <a id="dl-lrc-btn" href="#" download class="btn-download-subtle">
+                  <span>⏱️ .LRC Timestamps</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Synchronized Karaoke Teleprompter -->
+          <div class="teleprompter-card">
+            <div class="teleprompter-header">
+              <h4>Synced Lyrics Teleprompter</h4>
+              <span id="teleprompter-count" class="badge badge-subtle">0 lines</span>
+            </div>
+            <div id="teleprompter-stream" class="teleprompter-stream">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Previously Generated Videos Gallery -->
+    <section class="gallery-section">
+      <div class="gallery-header">
+        <h3 class="gallery-title">Generated Videos Gallery</h3>
+        <button id="refresh-gallery-btn" class="mini-btn">🔄 Refresh Gallery</button>
+      </div>
+      <div id="videos-gallery-grid" class="gallery-grid">
+        <div class="gallery-empty">No videos generated yet. Enter a song name above to start!</div>
+      </div>
+    </section>
+
+    <!-- Modal: Choose Viral Hook Modal -->
+    <div id="hook-modal" class="modal-backdrop" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 9999; justify-content: center; align-items: center; padding: 20px;">
+      <div class="modal-content" style="background: #18181b; border: 1px solid rgba(255,255,255,0.15); border-radius: 16px; width: 100%; max-width: 520px; padding: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); color: #fff;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h3 style="margin: 0; font-size: 1.25rem; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+            <span>🔥</span> Choose Starting Hook
+          </h3>
+          <button type="button" id="close-hook-modal-btn" style="background: transparent; border: none; color: #888; font-size: 20px; cursor: pointer;">&times;</button>
+        </div>
+        <p style="font-size: 0.88rem; color: #a1a1aa; margin-bottom: 20px;">
+          Instagram heatpoint analysis detected viral hooks for this track. Which segment would you like to render?
+        </p>
+        <div id="hook-modal-list" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; max-height: 280px; overflow-y: auto;">
+          <!-- Dynamically populated hooks -->
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+          <button type="button" id="hook-modal-cancel-btn" class="pill-btn" style="background: #27272a; color: #fff; border: 1px solid #3f3f46; padding: 8px 18px; border-radius: 8px; cursor: pointer;">Cancel</button>
+          <button type="button" id="hook-modal-confirm-btn" class="generate-btn" style="padding: 8px 20px; font-size: 0.9rem;">Start Video Generation 🚀</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Schedule to Metricool Hub -->
+    <div id="schedule-hub-modal" class="modal-backdrop" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 9999; justify-content: center; align-items: center; padding: 20px;">
+      <div class="modal-content" style="background: #0d1117; border: 1px solid #30363d; border-radius: 16px; width: 100%; max-width: 520px; padding: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.8); color: #fff; font-family: 'Nunito Sans', sans-serif;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h3 style="margin: 0; font-size: 1.25rem; font-weight: 800; display: flex; align-items: center; gap: 8px;">
+            <span>📅</span> Schedule to Metricool Hub
+          </h3>
+          <button type="button" id="close-schedule-modal-btn" style="background: transparent; border: none; color: #888; font-size: 20px; cursor: pointer;">&times;</button>
+        </div>
+        
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #8b949e; margin-bottom: 6px;">Target Brand Workspace</label>
+          <select id="hub-brand-select" style="width: 100%; background: #07090d; border: 1px solid #30363d; border-radius: 8px; color: #fff; padding: 10px; font-family: inherit; font-size: 14px;">
+            <option value="">Loading brands...</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #8b949e; margin-bottom: 6px;">Platforms</label>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <label style="font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer;"><input type="checkbox" id="hub-plat-ig" checked> 📸 Instagram</label>
+            <label style="font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer;"><input type="checkbox" id="hub-plat-fb" checked> 📘 Facebook</label>
+            <label style="font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer;"><input type="checkbox" id="hub-plat-threads"> 🧵 Threads</label>
+            <label style="font-size: 13px; display: flex; align-items: center; gap: 6px; cursor: pointer;"><input type="checkbox" id="hub-plat-yt"> ▶️ YouTube</label>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #8b949e; margin-bottom: 6px;">Caption</label>
+          <textarea id="hub-post-caption" rows="3" style="width: 100%; background: #07090d; border: 1px solid #30363d; border-radius: 8px; color: #fff; padding: 10px; font-family: inherit; font-size: 13px;" placeholder="When lyrics feel too personal... 🤌🤍"></textarea>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px;">
+          <div>
+            <label style="display: block; font-size: 12px; font-weight: 700; color: #8b949e; margin-bottom: 6px;">Date</label>
+            <input type="date" id="hub-post-date" style="width: 100%; background: #07090d; border: 1px solid #30363d; border-radius: 8px; color: #fff; padding: 8px; font-family: inherit; font-size: 13px;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 12px; font-weight: 700; color: #8b949e; margin-bottom: 6px;">Time</label>
+            <input type="time" id="hub-post-time" value="18:00" style="width: 100%; background: #07090d; border: 1px solid #30363d; border-radius: 8px; color: #fff; padding: 8px; font-family: inherit; font-size: 13px;">
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+          <button type="button" id="cancel-schedule-modal-btn" style="background: #21262d; color: #fff; border: 1px solid #30363d; padding: 8px 16px; border-radius: 8px; cursor: pointer;">Cancel</button>
+          <button type="button" id="confirm-schedule-modal-btn" style="background: #e7ff56; color: #000; font-weight: 800; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer;">Schedule Post 🚀</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">
+      <span id="toast-message">Ready!</span>
+    </div>
+  </div>
+
+  <script src="app.js?v=3.0"></script>
+</body>
+</html>

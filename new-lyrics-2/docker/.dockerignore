@@ -1,0 +1,14 @@
+node_modules
+.venv
+.venv310
+__pycache__
+*.pyc
+.git
+.gitignore
+.vscode
+videos/output/*
+!videos/output/.gitkeep
+videos/input/*
+!videos/input/.gitkeep
+lyrics/*
+!lyrics/.gitkeep

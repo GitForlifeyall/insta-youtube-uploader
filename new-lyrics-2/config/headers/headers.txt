@@ -1,0 +1,83 @@
+# Add one header per line. A random header is selected for every YT Hindi Type video.
+# Supported dynamic tags:
+#   {song_name} or {song} -> replaced by current song title
+#   {duration}            -> replaced by duration (e.g. "30")
+#   {text}yellow or (text)* -> highlighted in warm aesthetic yellow/amber (#FFD43F)
+#   Inline Apple emojis (🤌, ✨, 🤍, ❤️‍🩹, 🫀, etc.) are fully rendered
+
+# --- Romantic & Love ---
+Currently obsessed with {this masterpiece}yellow
+{POV:}yellow You found the right person at the right time ❤️
+This song is dedicated to {my favourite person}yellow
+Me to my {favourite person}yellow 🫂
+Tag your {special one}yellow >>>
+This is for that {special one}yellow in your life ❤️🩹
+Mention your {favourite human}yellow 🫀
+When you realize you're {truly in love}yellow with them 💫
+{POV:}yellow When they become your safe place 🏡
+A reminder that you deserve {pure love}yellow ✨
+Dedicated to someone I {never want to lose}yellow 🤞
+If love had a sound, it would be {this song}yellow 🎶
+Send this to the person who {owns your heart}yellow ❤️
+I hope you find someone who feels like {home}yellow 🕊️
+You will always be my {favorite notification}yellow 💌
+{POV:}yellow When falling in love felt so easy 💫
+Loving you was the {best decision}yellow I ever made 🤍
+You make everything feel {a little lighter}yellow ✨
+
+# --- Lyrics & Music Appreciation ---
+The lyrics hit {completely different}yellow at night 🌙
+This part of {"{song_name}"}yellow always gives chills ✨
+When the lyrics describe {your exact situation}yellow 📝
+{POV:}yellow Listening to "{song_name}" with headphones on 🎧
+This transition deserves {infinite replays}yellow 🔁
+Why isn't anyone talking about {this bridge}yellow? 🤌
+The way "{song_name}" heals {unspoken pain}yellow ❤️🩹
+This melody will never {get old}yellow 🎵
+Some songs aren't just music, they are {memories}yellow 🎞️
+{POV:}yellow Hearing "{song_name}" for the very first time again 🥹
+When the beat drops and {everything feels right}yellow 🌊
+The vocals on this track are {out of this world}yellow 🪐
+This song will always have {a special place}yellow in my heart 🫀
+
+# --- POV & Nostalgia ---
+{POV:}yellow This song takes you back in time ❤️🩹
+{POV:}yellow The art of waiting for someone >>>
+{POV:}yellow Remembering the good old days with a smile 💭
+When you miss the {old version}yellow of yourself 🪞
+{POV:}yellow Late night drives with this playing on repeat 🌌
+A feeling you can never {explain in words}yellow 🍂
+When memories hit you {all of a sudden}yellow 🌧️
+{POV:}yellow The silence after this song ends... 🖤
+Back when life was {simple and peaceful}yellow 🌅
+Growing up means realizing {this song was right}yellow 🥀
+{POV:}yellow Staring at the ceiling at 2 AM with this song 🎧
+Some moments will only live on in {our memories}yellow 📸
+
+# --- Emotional & Heartbreak ---
+When {love}yellow turns into ego 💔
+{POV:}yellow Loving someone who isn't yours anymore
+Some goodbyes are {never spoken}yellow 🥀
+It hurts when you realize {you were the only one trying}yellow 🩹
+You can't heal in the {same place}yellow you got hurt 🚪
+{POV:}yellow You stopped explaining yourself to anyone 🔕
+Not every story gets a {happy ending}yellow 🌧️
+When you miss who they {used to be}yellow 🕊️
+Letting go was hard, but {holding on hurt more}yellow 💔
+You were my {favorite chapter}yellow, but the book is closed 📖
+{POV:}yellow You had to let them go to save yourself 🍂
+We became strangers with {too many memories}yellow 🥀
+
+# --- Aesthetic & Vibe Hooks ---
+Drop your {current favourite song}yellow in comments 👇
+Tell me your {comfort song}yellow right now 🎧
+This song is a {whole aesthetic}yellow 🪐
+Save this before {it trends}yellow 🚀
+Audio for your {next core memory}yellow 💫
+{POV:}yellow Sunsets, cool breeze, and "{song_name}" 🌅
+Rating "{song_name}" a solid {10/10}yellow ✨
+Songs that feel like {a warm hug}yellow ☕
+Add this to your {late-night playlist}yellow 🌙
+Playing this until {I get tired of it}yellow (Never) 🤍
+This audio will put you in a {peaceful mood}yellow 🍃
+Need more songs that sound like {pure magic}yellow 🪄

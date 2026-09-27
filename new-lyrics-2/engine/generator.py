@@ -1,0 +1,5210 @@
+"""
+YouTube-Powered 1080p MP4 Lyric-Video Overlay Generator in Python
+Supports Portrait (9:16 - 1080x1920) and Landscape (16:9 - 1920x1080) with Customizable Fonts.
+Renders high-quality 1080p 30fps H.264 / AAC MP4 video using FFmpeg.
+"""
+
+import os
+import re
+import sys
+import json
+import glob
+import random
+import math
+import textwrap
+import tempfile
+import hashlib
+import hmac
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+import subprocess
+import shutil
+import ctypes
+import ctypes.wintypes
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+
+import time
+import requests
+import yt_dlp
+try:
+    from ytmusicapi import YTMusic
+except ImportError:
+    YTMusic = None
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+import numpy as np
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+YT_HINDI_TRANSITION_SECONDS = 0.42
+
+
+def detect_tempo_transition_seconds(audio_path: str) -> float:
+    """Return a tempo-sensitive transition duration for YT Hindi Type.
+
+    Faster songs receive shorter transitions; slower songs receive longer
+    transitions. The bounds prevent extreme BPM estimates from producing
+    distracting cuts or transitions longer than a lyric segment.
+    """
+    analysis_path = audio_path
+    temporary_wav = None
+    try:
+        import aubio
+
+        # The Windows aubio wheel's source reader is WAV-only. Convert a
+        # temporary mono copy so MP3/M4A inputs work consistently.
+        if Path(audio_path).suffix.lower() != ".wav":
+            temporary_wav = os.path.join(
+                tempfile.gettempdir(),
+                f"lyric_aubio_{os.getpid()}_{int(time.time() * 1000)}.wav",
+            )
+            conversion = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", audio_path, "-vn", "-ac", "1",
+                    "-ar", "44100", "-c:a", "pcm_s16le", temporary_wav,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            if conversion.returncode != 0 or not os.path.exists(temporary_wav):
+                raise RuntimeError("FFmpeg could not prepare audio for aubio")
+            analysis_path = temporary_wav
+
+        win_size = 1024
+        hop_size = 512
+        source = aubio.source(analysis_path, 0, hop_size)
+        tempo = aubio.tempo("specdiff", win_size, hop_size, source.samplerate)
+        beat_times = []
+        while True:
+            samples, read = source()
+            if tempo(samples):
+                beat_times.append(float(tempo.get_last_s()))
+            if read < hop_size:
+                break
+
+        bpm = float(tempo.get_bpm() or 0.0)
+        if len(beat_times) >= 4:
+            intervals = [
+                beat_times[index] - beat_times[index - 1]
+                for index in range(1, len(beat_times))
+                if beat_times[index] > beat_times[index - 1]
+            ]
+            if intervals:
+                intervals.sort()
+                bpm = 60.0 / intervals[len(intervals) // 2]
+
+        if not 40.0 <= bpm <= 220.0:
+            raise ValueError(f"unreliable BPM estimate: {bpm:.1f}")
+
+        # 0.42s at 100 BPM; faster tempo => shorter transition.
+        transition = 0.42 * (100.0 / bpm)
+        return max(0.18, min(0.65, transition))
+    except Exception as exc:
+        print(f"[YT Hindi] BPM detection unavailable; using 0.42s transition ({type(exc).__name__})")
+        return YT_HINDI_TRANSITION_SECONDS
+    finally:
+        if temporary_wav:
+            try:
+                os.remove(temporary_wav)
+            except OSError:
+                pass
+
+
+# Force UTF-8 on Windows consoles to prevent cp1252 charmap encoding errors
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+
+def format_brat_multiline(text: str, max_chars_per_line: int = 15) -> str:
+    """
+    Wraps single-line text into multi-line Brat block using ASS line breaks (\\N).
+    """
+    text_clean = text.lower().strip()
+    if not text_clean:
+        return ""
+    wrapped_lines = textwrap.wrap(
+        text_clean,
+        width=max_chars_per_line,
+        break_long_words=False,
+        replace_whitespace=True
+    )
+    return r"\N".join(wrapped_lines)
+
+# Check if JSON progress mode is enabled
+JSON_MODE = "--json-progress" in sys.argv
+
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.youtube.com",
+    "Referer": "https://www.youtube.com/",
+}
+
+
+def emit_progress(step: str, percent: int, message: str, details: Optional[Dict[str, Any]] = None):
+    """Emit progress update to stdout in JSON format or human-readable format."""
+    payload = {
+        "type": "progress",
+        "step": step,
+        "percent": percent,
+        "message": message,
+        "details": details or {}
+    }
+    if JSON_MODE:
+        print(f"__JSON_PROGRESS__{json.dumps(payload)}", flush=True)
+    else:
+        print(f"[{percent}% - {step}] {message}", flush=True)
+
+
+def get_peak_memory_mb() -> Optional[float]:
+    """Return this Python process's peak resident memory, when available."""
+    try:
+        if os.name == "nt":
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", ctypes.wintypes.DWORD),
+                    ("PageFaultCount", ctypes.wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            h_process = ctypes.windll.kernel32.GetCurrentProcess()
+            psapi = ctypes.WinDLL("psapi")
+            psapi.GetProcessMemoryInfo.argtypes = [
+                ctypes.wintypes.HANDLE,
+                ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+                ctypes.wintypes.DWORD,
+            ]
+            psapi.GetProcessMemoryInfo.restype = ctypes.wintypes.BOOL
+            success = psapi.GetProcessMemoryInfo(h_process, ctypes.byref(counters), counters.cb)
+            if success and counters.PeakWorkingSetSize > 0:
+                return round(counters.PeakWorkingSetSize / (1024 * 1024), 2)
+            return None
+
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux reports KB; macOS reports bytes.
+        return round(peak / (1024 if peak < 10_000_000 else 1024 * 1024), 2)
+    except Exception:
+        return None
+
+
+def build_generation_metrics(
+    started_at: float,
+    cpu_started_at: float,
+    render_started_at: Optional[float],
+    output_path: str,
+    video_duration: float,
+    encoder_name: str,
+    resolution: str,
+    fps: int,
+) -> Dict[str, Any]:
+    """Build stable metrics for comparing render optimizations."""
+    wall_seconds = max(0.0, time.perf_counter() - started_at)
+    render_seconds = (
+        max(0.0, time.perf_counter() - render_started_at)
+        if render_started_at is not None else None
+    )
+    cpu_seconds = max(0.0, time.process_time() - cpu_started_at)
+    output_size_mb = None
+    try:
+        output_size_mb = round(os.path.getsize(output_path) / (1024 * 1024), 2)
+    except OSError:
+        pass
+
+    metrics = {
+        "wall_time_seconds": round(wall_seconds, 2),
+        "render_time_seconds": round(render_seconds, 2) if render_seconds is not None else None,
+        "python_cpu_time_seconds": round(cpu_seconds, 2),
+        "python_cpu_utilization_percent": round((cpu_seconds / wall_seconds) * 100, 1) if wall_seconds else 0.0,
+        "peak_memory_mb": get_peak_memory_mb(),
+        "output_size_mb": output_size_mb,
+        "video_duration_seconds": round(float(video_duration or 0.0), 2),
+        "render_speed_x": round(float(video_duration or 0.0) / wall_seconds, 2) if wall_seconds else 0.0,
+        "render_speed_x_excluding_download": (
+            round(float(video_duration or 0.0) / render_seconds, 2)
+            if render_seconds else None
+        ),
+        "encoder": encoder_name,
+        "resolution": resolution,
+        "fps": fps,
+    }
+    return metrics
+
+
+def fetch_direct_youtube_subtitles(video_info: Dict[str, Any], target_lang: str = "auto") -> Tuple[List[Tuple[float, float, str]], str]:
+    """
+    Directly fetches and parses YouTube timedtext JSON3/VTT subtitles via HTTP GET.
+    Prioritizes original native audio captions (-orig) and manual tracks when in auto mode.
+    """
+    subtitles_dict = video_info.get("subtitles", {})
+    auto_captions_dict = video_info.get("automatic_captions", {})
+    lang_pref = (target_lang or "auto").lower().strip()
+
+    candidate_langs = []
+
+    if lang_pref == "auto":
+        # 1. First priority: Any creator manual subtitles
+        for k, v in subtitles_dict.items():
+            if k != "live_chat":
+                candidate_langs.append(("manual", k, v))
+
+        # 2. Second priority: Original spoken audio auto-caption (e.g. 'en-orig', 'pa-orig')
+        for k, v in auto_captions_dict.items():
+            if k.endswith("-orig") or "orig" in k:
+                candidate_langs.append(("auto_orig", k, v))
+
+        # 3. Third priority: English auto-caption
+        for k, v in auto_captions_dict.items():
+            if k.startswith("en"):
+                candidate_langs.append(("auto_en", k, v))
+
+        # 4. Fourth priority: Any first available auto-caption
+        for k, v in auto_captions_dict.items():
+            if k != "live_chat" and k not in [c[1] for c in candidate_langs]:
+                candidate_langs.append(("auto_fallback", k, v))
+
+    else:
+        # User specified a specific language code (e.g. 'pa', 'en', 'es', 'hi', 'ja')
+        # Check aliases: pa / punjabi / panjabi
+        aliases = [lang_pref]
+        if lang_pref in ["pa", "punjabi", "panjabi"]:
+            aliases = ["pa", "punjabi", "panjabi", "pam"]
+        elif lang_pref in ["hi", "hindi"]:
+            aliases = ["hi", "hindi"]
+        elif lang_pref in ["es", "spanish"]:
+            aliases = ["es", "spa", "spanish"]
+
+        # 1. Match in manual subtitles
+        for k, v in subtitles_dict.items():
+            if k != "live_chat" and any(a in k.lower() for a in aliases):
+                candidate_langs.append(("manual_target", k, v))
+
+        # 2. Match in auto-captions
+        for k, v in auto_captions_dict.items():
+            if k != "live_chat" and any(a in k.lower() for a in aliases):
+                candidate_langs.append(("auto_target", k, v))
+
+        # DO NOT fallback to hi-orig or arbitrary languages when user asked for a specific language!
+
+    for kind, lang_key, formats in candidate_langs:
+        json3_fmt = next((f for f in formats if f.get("ext") == "json3"), None)
+        vtt_fmt = next((f for f in formats if f.get("ext") == "vtt"), None)
+        chosen_fmt = json3_fmt or vtt_fmt or (formats[0] if formats else None)
+
+        if not chosen_fmt or not chosen_fmt.get("url"):
+            continue
+
+        is_manual = kind.startswith("manual")
+        try:
+            url = chosen_fmt["url"]
+            resp = requests.get(url, headers=BROWSER_HEADERS, timeout=10)
+            if resp.status_code == 200 and resp.text.strip():
+                if chosen_fmt.get("ext") == "json3" or "json3" in url:
+                    data = resp.json()
+                    cues = parse_json3_timedtext(data)
+                    if cues:
+                        print(f"[Subtitles] Selected '{lang_key}' ({kind}) with {len(cues)} lines (manual={is_manual})")
+                        return cues, lang_key, is_manual
+                else:
+                    cues = parse_vtt_text(resp.text)
+                    if cues:
+                        print(f"[Subtitles] Selected VTT '{lang_key}' ({kind}) with {len(cues)} lines (manual={is_manual})")
+                        return cues, lang_key, is_manual
+        except Exception as e:
+            print(f"[Warning] Failed to fetch subtitles for {lang_key}: {e}")
+
+    return [], "none", False
+
+
+
+def is_lyric_metadata(text: str) -> bool:
+    """Reject subtitle metadata/descriptions that are not actual lyric lines."""
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    if not normalized:
+        return True
+    metadata_phrases = (
+        "music playing", "native youtube audio", "instrumental", "music only",
+        "applause", "cheering", "speaking foreign language", "inaudible",
+        "[music]", "(music)", "music", "♪", "♫"
+    )
+    clean_no_brackets = re.sub(r"[\[\]\(\)\{\}\-♪♫]", " ", normalized).strip()
+    if clean_no_brackets in ("music", "music playing", "native youtube audio", "instrumental", "applause", "cheering", ""):
+        return True
+    return any(phrase in normalized for phrase in metadata_phrases if len(phrase) > 5)
+
+
+def parse_json3_timedtext(data: Dict[str, Any]) -> List[Tuple[float, float, str]]:
+    """Parse YouTube JSON3 timedtext structure into list of (start_sec, end_sec, text)."""
+    events = data.get("events", [])
+    cues: List[Tuple[float, float, str]] = []
+
+    for ev in events:
+        t_start = ev.get("tStartMs", 0) / 1000.0
+        t_dur = ev.get("dDurationMs", 0) / 1000.0
+        segs = ev.get("segs", [])
+        
+        raw_text = "".join([s.get("utf8", "") for s in segs if s.get("utf8")])
+        clean_text = raw_text.replace("\n", " ").strip()
+        clean_text = clean_text.replace("♪", "").replace("♫", "").strip()
+        clean_text = " ".join(clean_text.split())
+
+        if clean_text and clean_text != "\n" and not is_lyric_metadata(clean_text):
+            dur = t_dur if t_dur > 0 else 2.5
+            end_sec = max(t_start + 1.5, t_start + dur)
+            cues.append((t_start, end_sec, clean_text))
+
+    deduped: List[Tuple[float, float, str]] = []
+    for c in cues:
+        if deduped and deduped[-1][2].lower() == c[2].lower():
+            deduped[-1] = (deduped[-1][0], max(deduped[-1][1], c[1]), deduped[-1][2])
+        else:
+            deduped.append(c)
+
+    return deduped
+
+
+def parse_vtt_text(content: str) -> List[Tuple[float, float, str]]:
+    """Parse WebVTT content into list of (start_sec, end_sec, text)."""
+    cue_pattern = re.compile(
+        r"(?:(\d{2}:)?(\d{2}):(\d{2})\.(\d{3}))\s*-->\s*(?:(\d{2}:)?(\d{2}):(\d{2})\.(\d{3})).*?\n((?:(?!\n\n|\r\n\r\n|\d{2}:).)*)",
+        re.DOTALL
+    )
+    cues = []
+    for match in cue_pattern.finditer(content):
+        h1 = int(match.group(1).replace(":", "")) if match.group(1) else 0
+        m1 = int(match.group(2))
+        s1 = int(match.group(3))
+        ms1 = int(match.group(4))
+        start_sec = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+
+        h2 = int(match.group(5).replace(":", "")) if match.group(5) else 0
+        m2 = int(match.group(6))
+        s2 = int(match.group(7))
+        ms2 = int(match.group(8))
+        end_sec = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+
+        clean_text = re.sub(r"<[^>]+>", "", match.group(9).strip())
+        clean_text = " ".join(clean_text.split())
+        clean_text = clean_text.replace("♪", "").replace("♫", "").strip()
+
+        if clean_text and not is_lyric_metadata(clean_text):
+            if end_sec <= start_sec:
+                end_sec = start_sec + 2.5
+            cues.append((start_sec, end_sec, clean_text))
+
+    deduped: List[Tuple[float, float, str]] = []
+    for c in cues:
+        if deduped and deduped[-1][2].lower() == c[2].lower():
+            deduped[-1] = (deduped[-1][0], max(deduped[-1][1], c[1]), deduped[-1][2])
+        else:
+            deduped.append(c)
+
+    return deduped
+
+
+def fetch_lrclib_lyrics(song_title: str, artist_name: str = "", duration: float = 0.0) -> Tuple[List[Tuple[float, float, str]], str]:
+    """Fetch timestamped lyrics from LRCLIB as synced lyrics fallback with intelligent artist extraction and script preference."""
+    try:
+        raw_chunks = re.split(r'[\-\|\–\—\/]', song_title)
+        fluff_pattern = r'(?i)\b(official|music|video|audio|lyrics|lyrical|dance\s*songs|full\s*song|hd|4k|remix|vevo|topic|feat\.?|ft\.?|starring|records|t-series|tips\s*official|zee\s*music)\b|\(.*?\)|\[.*?\]'
+        
+        cleaned_chunks = []
+        for c in raw_chunks:
+            c_clean = re.sub(fluff_pattern, ' ', c).strip()
+            c_clean = " ".join(c_clean.split())
+            if c_clean and len(c_clean) > 1:
+                cleaned_chunks.append(c_clean)
+                
+        title_main = cleaned_chunks[0] if cleaned_chunks else re.sub(fluff_pattern, ' ', song_title).strip()
+        
+        potential_artists = [c for c in cleaned_chunks[1:] if len(c) > 2]
+        if artist_name and artist_name != "YouTube":
+            clean_art = re.sub(fluff_pattern, ' ', artist_name).strip()
+            if clean_art and clean_art not in potential_artists:
+                potential_artists.insert(0, clean_art)
+                
+        search_terms = []
+        for art in potential_artists[:3]:
+            search_terms.append(f"{title_main} {art}".strip())
+        search_terms.append(title_main)
+        
+        unique_terms = []
+        for t in search_terms:
+            if t and t not in unique_terms:
+                unique_terms.append(t)
+                
+        results = []
+        seen_ids = set()
+        for term in unique_terms:
+            try:
+                resp = requests.get("https://lrclib.net/api/search", params={"q": term}, headers=BROWSER_HEADERS, timeout=10)
+                if resp.ok and isinstance(resp.json(), list):
+                    for item in resp.json():
+                        iid = item.get("id")
+                        if iid and iid not in seen_ids:
+                            seen_ids.add(iid)
+                            results.append(item)
+            except Exception:
+                pass
+                
+        synced_results = [item for item in results if item.get("syncedLyrics") and not item.get("instrumental")]
+        if not synced_results:
+            return [], "none"
+            
+        def score_lrclib_candidate(item: Dict[str, Any]) -> Tuple[int, int, float]:
+            lyrics = item.get("syncedLyrics", "")
+            cand_artist = (item.get("artistName") or "").lower()
+            cand_track = (item.get("trackName") or "").lower()
+            
+            # Penalize non-Devanagari, non-Latin foreign scripts (e.g. Arabic/Urdu script: [\u0600-\u06FF])
+            has_arabic_urdu = bool(re.search(r'[\u0600-\u06FF]', lyrics))
+            has_indic = bool(re.search(r'[\u0900-\u097F\u0A00-\u0A7F]', lyrics))
+            has_latin = bool(re.search(r'[a-zA-Z]', lyrics))
+            
+            if has_arabic_urdu:
+                script_penalty = 100
+            elif has_indic and not (has_latin and len(re.findall(r'[a-zA-Z]', lyrics)) > 20):
+                script_penalty = 1
+            else:
+                script_penalty = 0
+                
+            artist_match_penalty = 0
+            if potential_artists:
+                any_match = any(
+                    any(token.lower() in cand_artist or token.lower() in cand_track for token in re.findall(r'\w+', art) if len(token) > 2)
+                    for art in potential_artists
+                )
+                artist_match_penalty = 0 if any_match else 2
+                
+            dur_diff = abs(float(item.get("duration") or duration) - float(duration or 0)) if duration > 0 else 0.0
+            return (script_penalty, artist_match_penalty, dur_diff)
+
+        best = min(synced_results, key=score_lrclib_candidate, default=synced_results[0])
+
+
+        
+        lrc_lines = []
+        for line in best["syncedLyrics"].splitlines():
+            m = re.match(r'\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)', line)
+            if m and m.group(3).strip():
+                start = int(m.group(1)) * 60 + float(m.group(2))
+                txt = m.group(3).strip()
+                if not is_lyric_metadata(txt):
+                    lrc_lines.append((start, txt))
+                    
+        cues = []
+        for i, (start, txt) in enumerate(lrc_lines):
+            end = lrc_lines[i + 1][0] if i + 1 < len(lrc_lines) else (start + 3.5)
+            cues.append((start, end, txt))
+            
+        if cues:
+            print(f"[LRCLIB] Found {len(cues)} synced lines for '{best.get('trackName')}' by '{best.get('artistName')}'")
+            return cues, "lrclib"
+    except Exception as e:
+        print(f"[LRCLIB Warning] {e}")
+        
+    return [], "none"
+
+
+
+SPOTIFY_LYRICS_API_URL = os.environ.get("SPOTIFY_LYRICS_API_URL", "http://localhost:8080").rstrip("/")
+SPOTIFY_SP_DC = os.environ.get("SPOTIFY_SP_DC", "")
+SPOTIFY_CLIENT_ID = os.environ.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = os.environ.get("SPOTIFY_CLIENT_SECRET", "")
+
+
+def fetch_spotify_track_metadata(spotify_url: str) -> Dict[str, Any]:
+    """Read public Spotify track metadata used for accurate YouTube matching.
+
+    This follows Sunnify's approach: Spotify supplies metadata only; yt-dlp
+    still downloads the permitted audio source from YouTube.
+    """
+    match = re.search(
+        r"(?:open\.spotify\.com/track/|spotify:track:)([A-Za-z0-9]{22})",
+        spotify_url,
+    )
+    if not match:
+        return {}
+
+    track_id = match.group(1)
+    try:
+        response = requests.get(
+            f"https://open.spotify.com/embed/track/{track_id}",
+            headers={"User-Agent": BROWSER_HEADERS["User-Agent"]},
+            timeout=8,
+        )
+        response.raise_for_status()
+        page_html = response.text
+        next_data = re.search(
+            r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>',
+            page_html,
+        )
+        if not next_data:
+            return {}
+        payload = json.loads(next_data.group(1))
+
+        def find_track(node: Any) -> Optional[Dict[str, Any]]:
+            if isinstance(node, dict):
+                if (node.get("duration") or 0) and (node.get("name") or node.get("title")):
+                    return node
+                for value in node.values():
+                    found = find_track(value)
+                    if found:
+                        return found
+            elif isinstance(node, list):
+                for value in node:
+                    found = find_track(value)
+                    if found:
+                        return found
+            return None
+
+        entity = find_track(payload) or {}
+        artists_data = entity.get("artists") or []
+        if isinstance(artists_data, list):
+            artists = ", ".join(
+                str(item.get("name", "")) for item in artists_data if isinstance(item, dict)
+            ).strip()
+        else:
+            artists = str(entity.get("subtitle") or "").strip()
+        album_data = entity.get("album") if isinstance(entity.get("album"), dict) else {}
+        album_images = album_data.get("images") if isinstance(album_data, dict) else []
+        cover_art = entity.get("coverArt") if isinstance(entity.get("coverArt"), dict) else {}
+        cover_sources = cover_art.get("sources") if isinstance(cover_art, dict) else []
+        visual_identity = entity.get("visualIdentity") if isinstance(entity.get("visualIdentity"), dict) else {}
+        visual_images = visual_identity.get("image") if isinstance(visual_identity, dict) else []
+        if not album_images and isinstance(cover_sources, list):
+            album_images = cover_sources
+        if not album_images and isinstance(visual_images, list):
+            album_images = visual_images
+        cover_url = ""
+        if isinstance(album_images, list) and album_images:
+            first_image = album_images[0]
+            if isinstance(first_image, dict):
+                cover_url = str(first_image.get("url") or "").strip()
+        if not cover_url:
+            image_meta = re.search(
+                r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
+                page_html,
+                flags=re.IGNORECASE,
+            )
+            cover_url = image_meta.group(1).strip() if image_meta else ""
+        if not cover_url:
+            # Spotify's embed page currently renders the cover as a normal img
+            # tag, even when it omits og:image and album.images from the entity.
+            image_src = re.search(
+                r'<img[^>]+(?:class=["\'][^"\']*CoverArt[^"\']*["\'][^>]+)?src=["\']([^"\']+)',
+                page_html,
+                flags=re.IGNORECASE,
+            )
+            cover_url = image_src.group(1).strip() if image_src else ""
+        if not cover_url:
+            try:
+                oembed = requests.get(
+                    f"https://open.spotify.com/oembed?url={urllib.parse.quote(spotify_url, safe='')}",
+                    headers={"User-Agent": BROWSER_HEADERS["User-Agent"]},
+                    timeout=5,
+                )
+                if oembed.ok:
+                    cover_url = str(oembed.json().get("thumbnail_url") or "").strip()
+            except Exception:
+                pass
+        return {
+            "title": str(entity.get("name") or entity.get("title") or "").strip(),
+            "artists": artists,
+            "duration": float(entity.get("duration") or 0) / 1000.0,
+            "cover_url": cover_url,
+        }
+    except Exception as exc:
+        emit_progress("spotify_metadata_warning", 42, f"Spotify metadata lookup unavailable: {type(exc).__name__}")
+        return {}
+
+
+def find_ytmusic_audio_url(title: str, artists: str) -> Optional[str]:
+    """Find a Spotify track through YouTube Music's Song search category."""
+    if YTMusic is None or not title:
+        return None
+    try:
+        client = YTMusic()
+        query = f"{title} {artists}".strip()
+        results = client.search(query)
+        if not results and artists:
+            results = client.search(title)
+        songs = [item for item in results if item.get("resultType") == "song"]
+        title_key = re.sub(r"[^\w\s]", "", title.casefold()).strip()
+        exact_title = [
+            item for item in songs
+            if title_key and title_key in re.sub(
+                r"[^\w\s]", "", str(item.get("title") or "").casefold()
+            )
+        ]
+        selected = exact_title[0] if exact_title else (songs[0] if songs else None)
+        video_id = selected.get("videoId") if selected else None
+        if video_id:
+            return f"https://music.youtube.com/watch?v={video_id}"
+    except Exception as exc:
+        emit_progress("ytmusic_warning", 30, f"YouTube Music lookup unavailable: {type(exc).__name__}")
+    return None
+
+
+_SPOTIFY_TOKEN_CACHE: Dict[str, Any] = {"token": None, "expires_at": 0.0}
+
+
+def _get_spotify_web_access_token(sp_dc: str) -> Optional[str]:
+    """Retrieve Spotify access token using the modern TOTP web-player handshake."""
+    global _SPOTIFY_TOKEN_CACHE
+    now = time.time()
+    if _SPOTIFY_TOKEN_CACHE.get("token") and now < _SPOTIFY_TOKEN_CACHE.get("expires_at", 0.0):
+        return _SPOTIFY_TOKEN_CACHE["token"]
+
+    if not sp_dc:
+        return None
+
+    try:
+        # 1. Secret cipher dictionary
+        secret_urls = [
+            "https://code.thetadev.de/ThetaDev/spotify-secrets/raw/branch/main/secrets/secretDict.json",
+            "https://raw.githubusercontent.com/xyloflake/spot-secrets-go/main/secrets/secretDict.json",
+        ]
+        data = None
+        for s_url in secret_urls:
+            try:
+                r_sec = requests.get(s_url, timeout=5)
+                if r_sec.ok:
+                    data = r_sec.json()
+                    break
+            except Exception:
+                continue
+
+        if not data:
+            print("[Spotify Direct Lyrics] unable to fetch cipher secrets")
+            return None
+
+        secret_version = list(data.keys())[-1]
+        ascii_codes = data[secret_version]
+        transformed = [val ^ ((i % 33) + 9) for i, val in enumerate(ascii_codes)]
+        secret_key = "".join(str(num) for num in transformed)
+        secret_bytes = bytes(secret_key, "utf-8")
+
+        # 2. Server timestamp
+        try:
+            r_time = requests.get(
+                "https://open.spotify.com/api/server-time",
+                headers={"User-Agent": BROWSER_HEADERS["User-Agent"]},
+                timeout=5,
+            )
+            server_time_sec = r_time.json().get("serverTime")
+            timestamp_ms = int(server_time_sec * 1000)
+        except Exception:
+            timestamp_ms = int(time.time() * 1000)
+
+        # 3. TOTP generation (SHA-1 HMAC)
+        period = 30
+        digits = 6
+        counter = math.floor(timestamp_ms / 1000 / period)
+        counter_bytes = counter.to_bytes(8, byteorder="big")
+        hmac_digest = hmac.new(secret_bytes, counter_bytes, hashlib.sha1).digest()
+        offset = hmac_digest[-1] & 0x0F
+        binary = (
+            ((hmac_digest[offset] & 0x7F) << 24)
+            | ((hmac_digest[offset + 1] & 0xFF) << 16)
+            | ((hmac_digest[offset + 2] & 0xFF) << 8)
+            | (hmac_digest[offset + 3] & 0xFF)
+        )
+        totp_code = str(binary % (10**digits)).zfill(digits)
+
+        # 4. Session & Token negotiation
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": BROWSER_HEADERS["User-Agent"],
+            "Accept": "application/json",
+            "Origin": "https://open.spotify.com",
+            "Referer": "https://open.spotify.com/",
+        })
+        session.cookies.set("sp_dc", sp_dc)
+
+        # Touch homepage to seed cookies
+        try:
+            session.get("https://open.spotify.com", timeout=5)
+        except Exception:
+            pass
+
+        token_params = {
+            "reason": "init",
+            "productType": "web-player",
+            "totp": totp_code,
+            "totpVer": str(secret_version),
+            "totpServer": totp_code,
+        }
+        token_resp = session.get(
+            "https://open.spotify.com/api/token",
+            params=token_params,
+            timeout=8,
+        )
+        if not token_resp.ok:
+            print(f"[Spotify Direct Lyrics] token request failed: HTTP {token_resp.status_code}")
+            return None
+
+        access_token = token_resp.json().get("accessToken")
+        if access_token:
+            _SPOTIFY_TOKEN_CACHE["token"] = access_token
+            _SPOTIFY_TOKEN_CACHE["expires_at"] = now + 3000
+            return access_token
+    except Exception as exc:
+        print(f"[Spotify Direct Lyrics] token generation error ({type(exc).__name__}): {exc}")
+    return None
+
+
+def fetch_spotify_direct_lyrics(track_id: str) -> Tuple[List[Tuple[float, float, str]], str]:
+    """Fetch synced lyrics directly from Spotify's web-player lyric service."""
+    if not SPOTIFY_SP_DC:
+        return [], "none"
+
+    access_token = _get_spotify_web_access_token(SPOTIFY_SP_DC)
+    if not access_token:
+        return [], "none"
+
+    common_headers = {
+        "User-Agent": BROWSER_HEADERS["User-Agent"],
+        "App-Platform": "WebPlayer",
+        "Accept": "application/json",
+        "Origin": "https://open.spotify.com",
+        "Referer": "https://open.spotify.com/",
+        "Authorization": f"Bearer {access_token}",
+    }
+    try:
+        lyrics_response = requests.get(
+            f"https://spclient.wg.spotify.com/color-lyrics/v2/track/{track_id}",
+            params={"format": "json", "market": "from_token", "vocalRemoval": "false"},
+            headers=common_headers,
+            timeout=8,
+        )
+        if not lyrics_response.ok:
+            print(f"[Spotify Direct Lyrics] lyrics request failed: HTTP {lyrics_response.status_code}")
+            return [], "none"
+        lyrics_payload = lyrics_response.json().get("lyrics", {})
+        if lyrics_payload.get("syncType", "").upper() == "UNSYNCED":
+            return [], "none"
+
+        raw_lines = lyrics_payload.get("lines", [])
+        timed_lines = []
+        for item in raw_lines:
+            try:
+                start_ms = float(item.get("startTimeMs") or 0)
+                text_value = (item.get("words") or "").strip()
+            except (TypeError, ValueError):
+                continue
+            if text_value and not is_lyric_metadata(text_value):
+                timed_lines.append((start_ms / 1000.0, text_value))
+
+        cues = []
+        for index, (start, text_value) in enumerate(timed_lines):
+            next_start = timed_lines[index + 1][0] if index + 1 < len(timed_lines) else start + 3.5
+            cues.append((start, max(start + 1.2, next_start), text_value))
+        if len(cues) > 1 and max(cue[0] for cue in cues) - min(cue[0] for cue in cues) >= 0.5:
+            return cues, "spotify"
+    except requests.RequestException as exc:
+        print(f"[Spotify Direct Lyrics] network request failed ({type(exc).__name__})")
+    except Exception as exc:
+        print(f"[Spotify Direct Lyrics] unavailable ({type(exc).__name__})")
+    return [], "none"
+
+
+def fetch_spotify_lyrics(song_title: str, artist_name: str = "", duration: float = 0.0) -> Tuple[List[Tuple[float, float, str]], str]:
+    """
+    Fetch synced lyrics from Spotify via local/Docker akashrchandran/spotify-lyrics-api REST API.
+    1. Checks for direct Spotify track link or resolves the Spotify track ID for the song.
+    2. Queries http://localhost:8080/?trackid={track_id}&format=lrc.
+    3. Parses synced lyrics into (start_sec, end_sec, text) cues.
+    """
+    try:
+        # Check if direct Spotify link was provided
+        direct_match = re.search(r'(?:spotify\.com/track/|spotify:track:)([a-zA-Z0-9]{22})', song_title)
+        if direct_match:
+            track_ids = [direct_match.group(1)]
+            search_query = song_title
+        else:
+            raw_chunks = re.split(r'[\-\|\–\—\/]', song_title)
+            fluff_pattern = r'(?i)\b(official|music|video|audio|lyrics|lyrical|dance\s*songs|full\s*song|hd|4k|remix|vevo|topic|feat\.?|ft\.?|starring|records|t-series|tips\s*official|zee\s*music)\b|\(.*?\)|\[.*?\]'
+            
+            cleaned_chunks = []
+            for c in raw_chunks:
+                c_clean = re.sub(fluff_pattern, ' ', c).strip()
+                c_clean = " ".join(c_clean.split())
+                if c_clean and len(c_clean) > 1:
+                    cleaned_chunks.append(c_clean)
+                    
+            title_main = cleaned_chunks[0] if cleaned_chunks else re.sub(fluff_pattern, ' ', song_title).strip()
+            artists_part = " ".join(cleaned_chunks[1:3]) if len(cleaned_chunks) > 1 else (artist_name if artist_name != "YouTube" else "")
+            search_query = f"{title_main} {artists_part}".strip()
+            
+            emit_progress("spotify_start", 42, f"Searching Spotify (Primary) for synced lyrics: '{search_query}'...")
+
+            # Multi-engine search for Spotify track ID
+            track_ids = []
+            
+            # Engine 0: Official Spotify Developer API (if configured in .env)
+            if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
+                try:
+                    auth_resp = requests.post(
+                        "https://accounts.spotify.com/api/token",
+                        data={"grant_type": "client_credentials"},
+                        auth=(SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET),
+                        timeout=4
+                    )
+                    if auth_resp.ok:
+                        app_token = auth_resp.json().get("access_token")
+                        if app_token:
+                            search_res = requests.get(
+                                "https://api.spotify.com/v1/search",
+                                params={"q": search_query, "type": "track", "limit": 3},
+                                headers={"Authorization": f"Bearer {app_token}"},
+                                timeout=4
+                            )
+                            if search_res.ok:
+                                for itm in search_res.json().get("tracks", {}).get("items", []):
+                                    if itm.get("id") and itm["id"] not in track_ids:
+                                        track_ids.append(itm["id"])
+                except Exception:
+                    pass
+
+            
+            # Engine 1: Jina AI Reader on open.spotify.com/search (bypasses JS rendering & DDG rate limits)
+            for query_variant in [f"{title_main} {artists_part}".strip(), title_main]:
+                if not query_variant:
+                    continue
+                try:
+                    jina_url = f"https://r.jina.ai/https://open.spotify.com/search/{urllib.parse.quote(query_variant)}"
+                    jina_resp = requests.get(jina_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+                    if jina_resp.ok:
+                        found_ids = re.findall(r'open\.spotify\.com/track/([a-zA-Z0-9]{22})', jina_resp.text)
+                        for tid in found_ids:
+                            if tid not in track_ids:
+                                track_ids.append(tid)
+                except Exception:
+                    pass
+                if track_ids:
+                    break
+
+            # Engine 2: DuckDuckGo HTML search fallback
+            if not track_ids:
+                search_queries = [
+                    f"site:open.spotify.com/track {search_query}",
+                    f"site:open.spotify.com/track {title_main}"
+                ]
+                for sq in search_queries:
+                    try:
+                        ddg_resp = requests.get(
+                            "https://html.duckduckgo.com/html/",
+                            params={"q": sq},
+                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                            timeout=5
+                        )
+                        if ddg_resp.ok:
+                            found_ids = re.findall(r'open\.spotify\.com(?:%2F|/)track(?:%2F|/)([a-zA-Z0-9]{22})', ddg_resp.text)
+                            for tid in found_ids:
+                                if tid not in track_ids:
+                                    track_ids.append(tid)
+                    except Exception:
+                        pass
+                    if track_ids:
+                        break
+
+
+        # 2. Query Spotify directly first when a track ID and SP_DC are available.
+        if track_ids:
+            direct_cues, direct_lang = fetch_spotify_direct_lyrics(track_ids[0])
+            if direct_cues:
+                emit_progress("spotify_done", 46, f"Retrieved {len(direct_cues)} synced lines directly from Spotify")
+                return direct_cues, direct_lang
+
+        # 3. Legacy local API fallback for environments that still run it.
+        for tid in track_ids[:3]:
+            try:
+                lrc_resp = requests.get(
+                    f"{SPOTIFY_LYRICS_API_URL}/",
+                    params={"trackid": tid, "format": "lrc"},
+                    timeout=5
+                )
+                if not lrc_resp.ok:
+                    continue
+                data = lrc_resp.json()
+                if data.get("error") or data.get("syncType", "").upper() == "UNSYNCED":
+                    continue
+                
+                lines_data = data.get("lines", [])
+                if not lines_data:
+                    continue
+                
+                cues = []
+                for idx, item in enumerate(lines_data):
+                    time_tag = item.get("timeTag") or item.get("startTimeMs") or "00:00.00"
+                    if isinstance(time_tag, (int, float)):
+                        s_sec = float(time_tag) / 1000.0
+                    else:
+                        m = re.match(r'(\d+):(\d+(?:\.\d+)?)', str(time_tag))
+                        s_sec = int(m.group(1)) * 60 + float(m.group(2)) if m else 0.0
+                        
+                    txt = (item.get("words") or "").strip()
+                    if txt and not is_lyric_metadata(txt):
+                        if idx + 1 < len(lines_data):
+                            next_tag = lines_data[idx + 1].get("timeTag") or lines_data[idx + 1].get("startTimeMs") or ""
+                            if isinstance(next_tag, (int, float)):
+                                e_sec = float(next_tag) / 1000.0
+                            else:
+                                mn = re.match(r'(\d+):(\d+(?:\.\d+)?)', str(next_tag))
+                                e_sec = int(mn.group(1)) * 60 + float(mn.group(2)) if mn else (s_sec + 3.0)
+                        else:
+                            e_sec = s_sec + 3.5
+                        cues.append((s_sec, max(s_sec + 1.2, e_sec), txt))
+                        
+                if cues and len(cues) > 1:
+                    timestamps = [c[0] for c in cues]
+                    if max(timestamps) - min(timestamps) < 0.5:
+                        # Unsynced lyrics with identical timestamps, skip
+                        continue
+                    emit_progress("spotify_done", 46, f"Retrieved {len(cues)} synced lines from Spotify (Track: {tid})")
+                    print(f"[Spotify-Lyrics-API] Found {len(cues)} synced lines on Spotify (Track ID: {tid})")
+                    return cues, "spotify"
+
+            except Exception:
+                continue
+
+    except Exception as err:
+        print(f"[Spotify-Lyrics-API Warning] {err}")
+
+    return [], "none"
+
+
+
+
+GENIUS_API_KEY = os.environ.get("GENIUS_API_KEY", "")
+
+
+def clean_genius_lyrics_text(raw: str) -> List[str]:
+    """Clean genius lyrics annotations and embedded metadata."""
+    lines = []
+    for line in raw.splitlines():
+        line = re.sub(r'^\d+Embed$', '', line)
+        line = re.sub(r'Embed$', '', line)
+        line = re.sub(r'\[.*?\]', '', line)
+        line = re.sub(r'\(.*?\)', '', line)
+        line = line.strip()
+        if line and len(line) > 1:
+            lines.append(line)
+    return lines
+
+
+def fetch_genius_lyrics_fallback(
+    song_title: str,
+    artist_name: str = "",
+    duration: float = 180.0
+) -> Tuple[List[Tuple[float, float, str]], str]:
+    """
+    Fallback lyrics retriever using the Genius API when YouTube has no captions or for non-English songs.
+    """
+    try:
+        import lyricsgenius
+    except ImportError:
+        return [], "none"
+
+    if not GENIUS_API_KEY:
+        return [], "none"
+
+    emit_progress("genius_fallback", 45, f"Querying Genius API for '{song_title}' lyrics...")
+
+    # Clean title to maximize Genius hit rate
+    clean_q = re.sub(r'\(.*?\)|\[.*?\]|official|music|video|audio|lyrics|latest|punjabi|hindi|songs|remix|hd|4k|\d{4}', '', song_title, flags=re.I).strip()
+    clean_q = re.sub(r'[\|\-_]', ' ', clean_q).strip()
+
+    try:
+        genius = lyricsgenius.Genius(GENIUS_API_KEY)
+        genius.verbose = False
+        genius.remove_section_headers = True
+
+        song = None
+        if artist_name and artist_name != "YouTube":
+            clean_artist = re.sub(r'VEVO|Official|Topic|\(.*?\)', '', artist_name, flags=re.I).strip()
+            song = genius.search_song(clean_q, clean_artist)
+
+        if not song:
+            song = genius.search_song(clean_q)
+
+        if not song and song_title != clean_q:
+            song = genius.search_song(song_title)
+
+        if song and song.lyrics:
+            lines = clean_genius_lyrics_text(song.lyrics)
+            if lines:
+                print(f"[Genius] Found {len(lines)} lines for '{song.title}' by '{song.artist}'")
+                
+                # Distribute lines across track duration
+                intro_lead = 5.0
+                outro_lead = 4.0
+                usable_time = max(10.0, (duration or 180.0) - intro_lead - outro_lead)
+                step = usable_time / len(lines)
+
+                cues = []
+                for i, text in enumerate(lines):
+                    t_start = intro_lead + (i * step)
+                    dur = min(step * 0.95, 4.5)
+                    t_end = t_start + max(1.5, dur)
+                    cues.append((round(t_start, 2), round(t_end, 2), text))
+
+                return cues, "genius"
+    except Exception as e:
+        print(f"[Genius Fallback Warning] {e}")
+
+    return [], "none"
+
+
+def get_python_executable() -> str:
+    """Resolve preferred virtualenv Python interpreter (.venv310 -> .venv -> sys.executable)."""
+    project_root = Path(__file__).resolve().parent
+    venv310_py = project_root / ".venv310" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    if venv310_py.exists():
+        return str(venv310_py)
+    venv_py = project_root / ".venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    if venv_py.exists():
+        return str(venv_py)
+    return sys.executable
+
+
+def transliterate_hindi_cues(cues: List[Tuple[float, float, str]]) -> Tuple[List[Tuple[float, float, str]], str]:
+    """Transliterate Devanagari/Indic script cues to Romanized Hinglish using AI4Bharat IndicXlit."""
+    if not cues or not any(re.search(r'[\u0900-\u097F\u0A00-\u0A7F]', text) for _, _, text in cues):
+        return cues, "none"
+
+    py_bin = get_python_executable()
+    runner_script = Path(__file__).resolve().parent / "indicxlit_runner.py"
+    payload = json.dumps([text for _, _, text in cues], ensure_ascii=False)
+
+    try:
+        proc = subprocess.run(
+            [py_bin, str(runner_script)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True
+        )
+        stdout_text = proc.stdout or ""
+        result_json_str = ""
+        for line in stdout_text.splitlines():
+            if line.startswith("__INDICXLIT_RESULT__"):
+                result_json_str = line.replace("__INDICXLIT_RESULT__", "").strip()
+                break
+        if not result_json_str:
+            match = re.search(r'\[.*\]', stdout_text, re.DOTALL)
+            if match:
+                result_json_str = match.group(0)
+
+        if result_json_str:
+            converted = json.loads(result_json_str)
+            return [(s, e, converted[i] if i < len(converted) else text) for i, (s, e, text) in enumerate(cues)], "indicxlit"
+    except Exception as error:
+        emit_progress("indicxlit_warning", 50, f"IndicXlit transliteration warning: {error}")
+
+    return cues, "none"
+
+
+# Cache detected encoder
+_CACHED_ENCODER = None
+
+
+def detect_fastest_h264_encoder() -> Tuple[str, List[str]]:
+    """Return the fastest usable H.264 encoder advertised by the local FFmpeg.
+
+    Listing encoders avoids attempting unsupported binaries unnecessarily. A
+    tiny encode still validates the driver, because FFmpeg can advertise an
+    encoder that is unavailable at runtime (for example when its GPU driver is
+    missing).
+    """
+    global _CACHED_ENCODER
+    if _CACHED_ENCODER is not None:
+        return _CACHED_ENCODER
+
+    fallback = ("libx264", ["-preset", "ultrafast", "-tune", "fastdecode", "-crf", "18"])
+    encoder_flags = {
+        "h264_nvenc": ["-preset", "p1", "-cq", "19"],
+        "h264_qsv": ["-preset", "veryfast"],
+        "h264_amf": ["-quality", "speed", "-rc", "cqp", "-qp_i", "19", "-qp_p", "19"],
+        "h264_videotoolbox": [],
+        "h264_mf": ["-rate_control", "cbr", "-b:v", "3M"],
+        "libx264": fallback[1],
+    }
+
+    try:
+        encoder_result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        available_encoders = encoder_result.stdout + encoder_result.stderr
+    except (OSError, subprocess.SubprocessError):
+        available_encoders = ""
+
+    # Keep this order aligned with hardware throughput on typical consumer
+    # systems, with Media Foundation retained for Windows-only FFmpeg builds.
+    candidate_names = [
+        "h264_nvenc",
+        "h264_qsv",
+        "h264_amf",
+        "h264_videotoolbox",
+        "h264_mf",
+        "libx264",
+    ]
+    test_candidates = [
+        (name, encoder_flags[name])
+        for name in candidate_names
+        if re.search(rf"\b{re.escape(name)}\b", available_encoders)
+    ]
+
+    # If encoder listing failed, retain the old behavior and let the encode
+    # probe determine what the installed FFmpeg can actually use.
+    if not test_candidates:
+        test_candidates = [
+            ("h264_nvenc", ["-preset", "p1", "-cq", "19"]),
+            ("h264_qsv", ["-preset", "veryfast"]),
+            ("h264_amf", ["-quality", "speed", "-rc", "cqp", "-qp_i", "19", "-qp_p", "19"]),
+            ("h264_videotoolbox", []),
+            ("h264_mf", ["-rate_control", "cbr", "-b:v", "3M"]),
+            fallback,
+        ]
+
+    for enc_name, extra_flags in test_candidates:
+        cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=640x360:r=30:d=0.1",
+            "-c:v", enc_name
+        ] + extra_flags + ["-f", "null", "-"]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode == 0:
+                _CACHED_ENCODER = (enc_name, extra_flags)
+                return _CACHED_ENCODER
+        except Exception:
+            pass
+
+    _CACHED_ENCODER = fallback
+    return _CACHED_ENCODER
+
+
+def get_encoder_for_quality(preview_quality: str = "final") -> Tuple[str, List[str]]:
+    """Select encoder flags for final output or a quick preview render."""
+    encoder_name, encoder_flags = detect_fastest_h264_encoder()
+    if (preview_quality or "").lower() in ("fast", "draft", "preview") and encoder_name == "libx264":
+        return encoder_name, ["-preset", "ultrafast", "-crf", "28"]
+    return encoder_name, encoder_flags
+
+
+def download_youtube_audio(
+    query_or_url: str,
+    output_audio_path: str = "temp_audio.mp3",
+    target_lang: str = "auto"
+) -> Dict[str, Any]:
+    """Download audio as MP3 and probe video subtitle metadata in requested language with parallel streams."""
+    emit_progress("ytdlp_start", 15, f"Searching YouTube for '{query_or_url}' (Language: {target_lang})...")
+    audio_basename = str(Path(output_audio_path).with_suffix(""))
+
+    # Remove leftovers from interrupted yt-dlp/FFmpeg runs. On Windows a
+    # stale .part file can prevent yt-dlp from renaming the completed stream.
+    stale_prefix = Path(audio_basename)
+    for stale_file in stale_prefix.parent.glob(f"{stale_prefix.name}.*"):
+        try:
+            stale_file.unlink()
+        except OSError:
+            emit_progress(
+                "ytdlp_cleanup_warning",
+                16,
+                f"Could not remove locked temporary audio file: {stale_file.name}",
+            )
+
+    is_youtube_url = ("youtube.com" in query_or_url or "youtu.be" in query_or_url)
+    is_search_query = False
+    spotify_metadata: Dict[str, Any] = {}
+    expected_duration = 0.0
+    expected_title = ""
+    expected_artists = ""
+    spotify_priority_cues: List[Tuple[float, float, str]] = []
+    if "spotify.com/track/" in query_or_url or query_or_url.startswith("spotify:track:"):
+        spotify_metadata = fetch_spotify_track_metadata(query_or_url)
+        expected_title = spotify_metadata.get("title") or ""
+        expected_artists = spotify_metadata.get("artists") or ""
+        expected_duration = float(spotify_metadata.get("duration") or 0)
+        # Put the song title first: YouTube search generally weights the
+        # leading terms more heavily than trailing artist metadata.
+        sp_title = f"{expected_title} {expected_artists}".strip() or query_or_url
+        try:
+            if not expected_title:
+                oembed_resp = requests.get(f"https://open.spotify.com/oembed?url={query_or_url}", timeout=4)
+                if oembed_resp.ok:
+                    sp_title = oembed_resp.json().get("title", query_or_url)
+        except Exception:
+            pass
+        ytmusic_url = find_ytmusic_audio_url(expected_title, expected_artists)
+        if ytmusic_url:
+            search_target = ytmusic_url
+            is_search_query = False
+            emit_progress(
+                "ytmusic_selected",
+                30,
+                "Selected the matching YouTube Music Song result for audio download...",
+            )
+        else:
+            search_target = f"ytsearch10:{sp_title}"
+            is_search_query = True
+        emit_progress("spotify_priority", 18, "Fetching synced lyrics from Spotify first...")
+        spotify_priority_cues, spotify_priority_lang = fetch_spotify_lyrics(
+            query_or_url,
+            expected_artists,
+            expected_duration,
+        )
+        if spotify_priority_cues:
+            emit_progress(
+                "spotify_priority_done",
+                22,
+                f"Spotify synced lyrics found ({len(spotify_priority_cues)} lines); using Spotify as the primary lyrics source.",
+            )
+    elif is_youtube_url:
+        search_target = query_or_url
+    else:
+        search_target = f"ytsearch10:{query_or_url}"
+        is_search_query = True
+
+
+    ydl_opts = {
+        "format": "ba[ext=m4a]/ba/b",
+        "outtmpl": f"{audio_basename}.%(ext)s",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "writesubtitles": False,
+        "writeautomaticsub": False,
+        "concurrent_fragment_downloads": 4,
+        "buffersize": 1024 * 64,
+        "http_headers": BROWSER_HEADERS,
+        "retries": 3,
+        "fragment_retries": 3,
+        "file_access_retries": 10,
+        "overwrites": True,
+        "continuedl": False,
+    }
+
+    emit_progress("ytdlp_downloading", 35, f"Extracting audio track and fetching captions in '{target_lang}'...")
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        # A plain YouTube search can return several versions of a track.
+        # Select the result with the most representative runtime. A pasted
+        # URL remains authoritative and is never silently replaced.
+        if is_search_query:
+            search_opts = dict(ydl_opts)
+            # Search metadata already provides title, duration, and video URL;
+            # fully extract only the selected result below for speed.
+            search_opts["extract_flat"] = True
+            with yt_dlp.YoutubeDL(search_opts) as search_ydl:
+                search_info = search_ydl.extract_info(search_target, download=False)
+            candidates = search_info.get("entries", []) if isinstance(search_info, dict) else []
+            candidates = [
+                item for item in candidates
+                if item and (item.get("webpage_url") or item.get("url"))
+            ]
+            duration_values = sorted(
+                float(item.get("duration") or 0)
+                for item in candidates
+                if float(item.get("duration") or 0) > 0
+            )
+            median_duration = (
+                duration_values[len(duration_values) // 2]
+                if duration_values
+                else 0.0
+            )
+            if len(duration_values) % 2 == 0 and duration_values:
+                median_duration = (
+                    duration_values[len(duration_values) // 2 - 1] + median_duration
+                ) / 2.0
+
+            def duration_score(item: Dict[str, Any]) -> int:
+                # Prefer the result closest to the common runtime returned by
+                # YouTube search, avoiding snippets, edits, and outliers.
+                item_duration = float(item.get("duration") or 0)
+                if median_duration and item_duration:
+                    duration_delta = abs(item_duration - median_duration)
+                    return max(0, int(160 - min(160, duration_delta * 8)))
+                return 0
+
+            if candidates:
+                # For Spotify links, compare against Spotify's exact track
+                # duration and title. This is Sunnify's key matching step.
+                selection_pool = candidates
+                # YouTube Music's catalogue audio is normally exposed on
+                # auto-generated "Artist - Topic" channels. Prefer those
+                # entries before considering ordinary uploads, which may be
+                # music videos, 8D edits, lyric videos, or fan reuploads.
+                topic_candidates = [
+                    item for item in candidates
+                    if re.search(
+                        r"(?:^|\s)-\s*topic\s*$|\btopic\b",
+                        " ".join(
+                            str(item.get(field) or "")
+                            for field in ("channel", "uploader", "creator", "title")
+                        ),
+                        flags=re.I,
+                    )
+                ]
+                # A normal search often ranks the music video above the
+                # auto-generated catalogue entry. Run one focused follow-up
+                # search before giving up, without making the normal path
+                # slower for every request.
+                if not topic_candidates and expected_title:
+                    topic_search = f"ytsearch10:{sp_title} Topic"
+                    with yt_dlp.YoutubeDL(search_opts) as topic_search_ydl:
+                        topic_info = topic_search_ydl.extract_info(
+                            topic_search,
+                            download=False,
+                        )
+                    topic_entries = topic_info.get("entries", []) if isinstance(topic_info, dict) else []
+                    topic_entries = [
+                        item for item in topic_entries
+                        if item and (item.get("webpage_url") or item.get("url"))
+                    ]
+                    candidates.extend(topic_entries)
+                    topic_candidates = [
+                        item for item in topic_entries
+                        if re.search(
+                            r"(?:^|\s)-\s*topic\s*$|\btopic\b",
+                            " ".join(
+                                str(item.get(field) or "")
+                                for field in ("channel", "uploader", "creator", "title")
+                            ),
+                            flags=re.I,
+                        )
+                    ]
+                # Flat search entries sometimes omit uploader/channel. Probe
+                # the small targeted result set once for the missing channel
+                # metadata before declaring that no Topic result exists.
+                if not topic_candidates and expected_title:
+                    for item in candidates[:10]:
+                        item_url = item.get("webpage_url") or item.get("url")
+                        if not item_url:
+                            continue
+                        try:
+                            enriched = ydl.extract_info(item_url, download=False)
+                        except Exception:
+                            continue
+                        if re.search(
+                            r"(?:^|\s)-\s*topic\s*$|\btopic\b",
+                            " ".join(
+                                str(enriched.get(field) or "")
+                                for field in ("channel", "uploader", "creator", "title")
+                            ),
+                            flags=re.I,
+                        ):
+                            topic_candidates.append(enriched)
+                if topic_candidates:
+                    selection_pool = topic_candidates
+                    emit_progress(
+                        "ytdlp_topic_priority",
+                        30,
+                        f"Prioritizing {len(topic_candidates)} YouTube Music auto-generated Topic result(s)...",
+                    )
+                elif expected_title:
+                    raise yt_dlp.utils.DownloadError(
+                        "No YouTube Music auto-generated Topic audio result found for this Spotify track."
+                    )
+                if expected_title:
+                    title_core = re.sub(r"[^\w\s]", " ", expected_title.lower())
+                    title_matches = [
+                        item for item in selection_pool
+                        if title_core and title_core in re.sub(
+                            r"[^\w\s]", " ", (item.get("title") or "").lower()
+                        )
+                    ]
+                    if title_matches:
+                        selection_pool = title_matches
+                        artist_tokens = [
+                            token.strip().lower()
+                            for token in re.split(r"[,&]+|\s+(?:feat\.?|ft\.?)\s+", expected_artists, flags=re.I)
+                            if token.strip()
+                        ]
+                        if artist_tokens:
+                            artist_matches = [
+                                item for item in title_matches
+                                if any(
+                                    token in (item.get("title") or "").lower()
+                                    for token in artist_tokens
+                                )
+                            ]
+                            if artist_matches:
+                                selection_pool = artist_matches
+
+                if expected_duration and any(item.get("duration") for item in selection_pool):
+                    def spotify_match_key(item: Dict[str, Any]) -> Tuple[float, int]:
+                        item_title = (item.get("title") or "").lower()
+                        unwanted_variant = bool(re.search(
+                            r"\b(?:8d|slowed|reverb|nightcore|sped\s*up|remix|edit|live|karaoke|cover|bass\s*boost(?:ed)?)\b",
+                            item_title,
+                        ))
+                        return (
+                            abs(float(item["duration"]) - expected_duration),
+                            1 if unwanted_variant else 0,
+                        )
+
+                    selected = min(
+                        (item for item in selection_pool if item.get("duration")),
+                        key=spotify_match_key,
+                    )
+                    if abs(float(selected["duration"]) - expected_duration) > 30:
+                        raise yt_dlp.utils.DownloadError(
+                            "No YouTube result matched the Spotify title and duration closely enough."
+                        )
+                else:
+                    selected = max(selection_pool, key=duration_score)
+                selected_url = selected.get("webpage_url") or selected.get("url")
+                if selected_url:
+                    search_target = selected_url
+                    comparison_duration = expected_duration or median_duration
+                    emit_progress("ytdlp_source_selected", 34, f"Selected the YouTube result closest to the Spotify track duration ({comparison_duration:.1f}s)...")
+
+        info = ydl.extract_info(search_target, download=True)
+        video_info = info["entries"][0] if "entries" in info and len(info["entries"]) > 0 else info
+
+    title = video_info.get("title", query_or_url)
+    duration = video_info.get("duration") or 0.0
+    uploader = video_info.get("uploader") or video_info.get("channel") or "YouTube"
+    artist = video_info.get("artist") or video_info.get("creator") or uploader
+
+    expected_audio = None
+    for candidate_ext in ("m4a", "webm", "opus", "mp3", "aac", "ogg"):
+        cand_path = f"{audio_basename}.{candidate_ext}"
+        if os.path.exists(cand_path):
+            expected_audio = cand_path
+            break
+    if not expected_audio:
+        matched = list(Path(audio_basename).parent.glob(f"{Path(audio_basename).name}.*"))
+        non_part = [str(p) for p in matched if not p.name.endswith(".part") and not p.name.endswith(".ytdl")]
+        if non_part:
+            expected_audio = non_part[0]
+        elif os.path.exists(output_audio_path):
+            expected_audio = output_audio_path
+        else:
+            expected_audio = f"{audio_basename}.m4a"
+
+    cues, matched_lang, is_manual = fetch_direct_youtube_subtitles(video_info, target_lang=target_lang)
+
+    # Check if lyrics contain non-Latin Indic/Gurmukhi/Devanagari script
+    has_indic_script = any(bool(re.search(r'[\u0900-\u097F\u0A00-\u0A7F]', c[2])) for c in cues) if cues else False
+    is_punjabi_or_hindi_requested = target_lang in ["pa", "punjabi", "panjabi", "hi", "hindi"]
+
+    if spotify_priority_cues:
+        # A direct Spotify track is authoritative for lyrics. YouTube is used
+        # only to obtain the audio matched to the Spotify metadata.
+        cues = spotify_priority_cues
+        matched_lang = spotify_priority_lang
+    elif is_manual and cues:
+        # 1. Manual / Creator-uploaded subtitles found:
+        # DO NOT fallback to Spotify or LRCLIB (even if in Devanagari script).
+        # Directly transliterate Devanagari lyrics into Hinglish with IndicXlit.
+        if has_indic_script:
+            emit_progress("indicxlit_start", 50, "Manual creator Devanagari captions found; transliterating with AI4Bharat IndicXlit...")
+            cues, xlit_src = transliterate_hindi_cues(cues)
+            if xlit_src == "indicxlit":
+                matched_lang = "indicxlit"
+    else:
+        # 2. YouTube Auto-generated subtitles or No manual subtitles found:
+        # Strict priority: 1) Spotify Lyrics API -> 2) LRCLIB -> 3) Auto-captions fallback
+        query_hint = query_or_url if ("spotify.com" in query_or_url or "spotify:" in query_or_url) else title
+        spotify_cues, spotify_lang = fetch_spotify_lyrics(query_hint, artist, duration)
+        if spotify_cues:
+            cues = spotify_cues
+            matched_lang = spotify_lang
+        else:
+            emit_progress("lrclib_fallback", 45, "Searching LRCLIB for verified synced lyrics...")
+            lrclib_cues, lrclib_lang = fetch_lrclib_lyrics(title, artist, duration)
+            if lrclib_cues:
+                cues = lrclib_cues
+                matched_lang = lrclib_lang
+
+        # Transliterate any Devanagari script in active cues (from LRCLIB or YouTube auto-captions)
+        has_indic_script = any(bool(re.search(r'[\u0900-\u097F\u0A00-\u0A7F]', c[2])) for c in cues) if cues else False
+        if has_indic_script:
+            emit_progress("indicxlit_start", 50, "Devanagari/Indic script detected; transliterating lyrics with AI4Bharat IndicXlit...")
+            cues, xlit_src = transliterate_hindi_cues(cues)
+            if xlit_src == "indicxlit":
+                matched_lang = "indicxlit"
+
+
+    # Enforce Romanized Hinglish/Punjabi lyrics via Genius when Indic script is still present or no captions found
+    has_remaining_indic = any(bool(re.search(r'[\u0900-\u097F\u0A00-\u0A7F]', c[2])) for c in cues) if cues else False
+    if not cues or has_remaining_indic or (not cues and is_punjabi_or_hindi_requested):
+        emit_progress("genius_fallback", 50, f"Fetching verified Romanized Punjabi/Hinglish lyrics from Genius API...")
+        genius_cues, genius_lang = fetch_genius_lyrics_fallback(title, uploader, duration)
+        if genius_cues:
+            if cues and len(cues) > 5 and len(genius_cues) > 5 and has_remaining_indic:
+                aligned_cues = []
+                num_cues = min(len(cues), len(genius_cues))
+                for i in range(num_cues):
+                    aligned_cues.append((cues[i][0], cues[i][1], genius_cues[i][2]))
+                cues = aligned_cues
+            else:
+                cues = genius_cues
+            matched_lang = "punjabi_hinglish"
+
+
+
+
+    emit_progress("ytdlp_done", 55, f"Audio & lyrics ready: '{title}' ({len(cues)} lines, source: {matched_lang})", {
+        "title": title,
+        "duration": duration,
+        "uploader": uploader,
+        "audio_path": expected_audio,
+        "matched_lang": matched_lang,
+        "cues_count": len(cues)
+    })
+
+    return {
+        "title": title,
+        "spotify_title": expected_title,
+        "duration": duration,
+        "uploader": uploader,
+        "audio_path": expected_audio,
+        "matched_lang": matched_lang,
+        "cues": cues
+    }
+
+
+def seconds_to_ass_timestamp(total_seconds: float) -> str:
+    total_seconds = max(0.0, total_seconds)
+    h = int(total_seconds // 3600)
+    m = int((total_seconds % 3600) // 60)
+    s = int(total_seconds % 60)
+    cs = min(99, int(round((total_seconds - int(total_seconds)) * 100)))
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def seconds_to_lrc_timestamp(total_seconds: float) -> str:
+    total_seconds = max(0.0, total_seconds)
+    m = int(total_seconds // 60)
+    s = int(total_seconds % 60)
+    cs = min(99, int(round((total_seconds - int(total_seconds)) * 100)))
+    return f"{m:02d}:{s:02d}.{cs:02d}"
+
+
+BRAT_THEMES = {
+    "green": {
+        "name": "Brat Lime",
+        "bg_color": "0x8ACE00",
+        "text_color": "&H00000000",
+        "hex_bg": "#8ACE00",
+        "hex_text": "#000000",
+    },
+    "white": {
+        "name": "Brat White",
+        "bg_color": "0xFFFFFF",
+        "text_color": "&H00000000",
+        "hex_bg": "#FFFFFF",
+        "hex_text": "#000000",
+    },
+    "red": {
+        "name": "The Moment (Red/Blue)",
+        "bg_color": "0xFF0000",
+        "text_color": "&H00FF0000",
+        "hex_bg": "#FF0000",
+        "hex_text": "#0000FF",
+    },
+    "black": {
+        "name": "Brat Black",
+        "bg_color": "0x000000",
+        "text_color": "&H00FFFFFF",
+        "hex_bg": "#000000",
+        "hex_text": "#FFFFFF",
+    },
+    "blue": {
+        "name": "SWEAT Tour (Blue/Red)",
+        "bg_color": "0x0A00AD",
+        "text_color": "&H000001DE",
+        "outline_color": "&H00000000",
+        "hex_bg": "#0A00AD",
+        "hex_text": "#DE0100",
+        "font_name": "Impact",
+        "bold": -1,
+        "scale_x": 100,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "uppercase": True,
+    },
+    "strike": {
+        "name": "Brat Strike",
+        "bg_color": "0x8ACE00",
+        "text_color": "&H00000000",
+        "hex_bg": "#8ACE00",
+        "hex_text": "#000000",
+        "strikeout": 1,
+    }
+}
+
+
+TEMPLATES = {
+    "template1": {
+        "id": "template1",
+        "name": "Template 1",
+        "aspect_ratio": "portrait",
+        "font_name": "Impact",
+        "font_size": 62,
+        "primary_color": "&H00FFFFFF",
+        "outline_color": "&H00000000",
+        "back_color": "&H80000000",
+        "bold": -1,
+        "outline_width": 4,
+        "shadow_depth": 3,
+        "margin_v": 440,
+        "bg_color": "black",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": False,
+    },
+    "template2": {
+        "id": "template2",
+        "name": "Template 2",
+        "aspect_ratio": "portrait",
+        "font_name": "Montserrat",
+        "font_size": 54,
+        "primary_color": "&H0000FFFF",
+        "outline_color": "&H00000000",
+        "back_color": "&H80000000",
+        "bold": -1,
+        "outline_width": 3,
+        "shadow_depth": 2,
+        "margin_v": 420,
+        "bg_color": "black",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": False,
+    },
+    "template3": {
+        "id": "template3",
+        "name": "Template 3",
+        "aspect_ratio": "landscape",
+        "font_name": "Arial",
+        "font_size": 48,
+        "primary_color": "&H00FFFFFF",
+        "outline_color": "&H00000000",
+        "back_color": "&H80000000",
+        "bold": -1,
+        "outline_width": 3,
+        "shadow_depth": 2,
+        "margin_v": 80,
+        "bg_color": "black",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": False,
+    },
+    "template4_brat": {
+        "id": "template4_brat",
+        "name": "Template 4 (Brat Minimal)",
+        "aspect_ratio": "portrait",
+        "font_name": "Arial Narrow",
+        "font_size": 72,
+        "primary_color": "&H00000000",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 0,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 80,
+        "bg_color": "0x8ACE00",
+        "scale_x": 68,
+        "blur": 1.5,
+        "spacing": -1,
+        "force_lowercase": False,
+        "force_uppercase": True,
+    },
+    "template_4_brat": {
+        "id": "template_4_brat",
+        "name": "Template 4 (Brat Minimal)",
+        "aspect_ratio": "portrait",
+        "font_name": "Arial Narrow",
+        "font_size": 72,
+        "primary_color": "&H00000000",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 0,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 80,
+        "bg_color": "0x8ACE00",
+        "scale_x": 68,
+        "blur": 1.5,
+        "spacing": -1,
+        "force_lowercase": False,
+        "force_uppercase": True,
+    },
+    "brat": {
+        "id": "brat",
+        "name": "Brat Minimal (Charli XCX)",
+        "aspect_ratio": "portrait",
+        "font_name": "Arial Narrow",
+        "font_size": 72,
+        "primary_color": "&H00000000",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 0,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 80,
+        "bg_color": "0x8ACE00",
+        "scale_x": 68,
+        "blur": 1.5,
+        "spacing": -1,
+        "force_lowercase": False,
+        "force_uppercase": True,
+    },
+    "yt_hindi_type": {
+        "id": "yt_hindi_type",
+
+        "name": "YT Hindi Type (Cinematic Video)",
+        "aspect_ratio": "portrait",
+        "font_name": "EB Garamond",
+        "font_size": 38,
+        "primary_color": "&H00FFFFFF",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 0,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 0,
+        "bg_color": "black",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": False,
+    },
+    "yt_hindi_intro": {
+        "id": "yt_hindi_intro",
+        "name": "YT Hindi (Film Burn Intro)",
+        "aspect_ratio": "portrait",
+        "font_name": "EB Garamond",
+        "font_size": 38,
+        "primary_color": "&H00FFFFFF",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 0,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 0,
+        "bg_color": "black",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": False,
+        "film_burn_intro": True,
+    },
+    "master_lyrics": {
+        "id": "master_lyrics",
+        "name": "Master Lyric (Aesthetic Card)",
+        "aspect_ratio": "portrait",
+        "font_name": "EB Garamond",
+        "font_size": 44,
+        "primary_color": "&H00000000",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 0,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 0,
+        "bg_color": "photo",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": False,
+    },
+    "c19_nokia": {
+        "id": "c19_nokia",
+        "name": "C19 Nokia (Retro Phone)",
+        "aspect_ratio": "square",
+        "font_name": "Nokia Cellphone FC",
+        "font_size": 115,
+        "primary_color": "&H00000000",
+        "outline_color": "&H00000000",
+        "back_color": "&H00000000",
+        "bold": 1,
+        "outline_width": 0,
+        "shadow_depth": 0,
+        "margin_v": 0,
+        "bg_color": "#b40000",
+        "scale_x": 100,
+        "blur": 0.0,
+        "force_lowercase": True,
+    }
+}
+
+
+def parse_hex_color(hex_str: str) -> Tuple[int, int, int]:
+    """Parse hex color string (e.g. '#b40000' or 'b40000') into (R, G, B) tuple."""
+    clean = re.sub(r'[^0-9a-fA-F]', '', hex_str or '')
+    if len(clean) == 3:
+        clean = ''.join(c * 2 for c in clean)
+    if len(clean) >= 6:
+        return (int(clean[:2], 16), int(clean[2:4], 16), int(clean[4:6], 16))
+    return (180, 0, 0)  # Default Retro Red #b40000
+
+
+def get_nokia_background(screen_color: str = "#b40000", sticker: Optional[str] = None, cache_dir: str = "videos/cache") -> str:
+    """
+    Renders or loads the cached 1080x1080 Nokia retro phone backdrop with dynamic screen_color and optional header sticker.
+    Uses pure monochrome brightness mapping so recolored screens have zero red bleeding or icon edge artifacts.
+    """
+    base_dir = PROJECT_ROOT
+    resolved_cache = os.path.join(base_dir, cache_dir)
+    os.makedirs(resolved_cache, exist_ok=True)
+
+    clean_hex = re.sub(r'[^0-9a-fA-F]', '', screen_color or 'b40000').lower()
+    if not clean_hex:
+        clean_hex = 'b40000'
+
+    # Resolve sticker if requested
+    sticker_path = None
+    sticker_key = "nosticker"
+    stickers_dir = os.path.join(base_dir, "stickers")
+    if sticker and str(sticker).strip().lower() not in ("none", "false", "0", ""):
+        stk_str = str(sticker).strip()
+        if stk_str.lower() in ("random", "true", "1"):
+            if os.path.exists(stickers_dir):
+                available = [f for f in os.listdir(stickers_dir) if f.lower().endswith(('.png', '.webp', '.jpg', '.jpeg'))]
+                if available:
+                    chosen = random.choice(available)
+                    sticker_path = os.path.join(stickers_dir, chosen)
+                    sticker_key = os.path.splitext(chosen)[0].lower()
+        else:
+            cand = os.path.join(stickers_dir, stk_str)
+            if not os.path.exists(cand) and not stk_str.endswith(".png"):
+                cand = os.path.join(stickers_dir, f"{stk_str}.png")
+            if os.path.exists(cand):
+                sticker_path = cand
+                sticker_key = os.path.splitext(os.path.basename(cand))[0].lower()
+
+    out_path = os.path.join(resolved_cache, f"nokia_bg_{clean_hex}_{sticker_key}.png")
+    if os.path.exists(out_path):
+        return out_path
+
+    base_path = os.path.join(base_dir, "templates", "c19_nokia", "screen_base_1080.png")
+    if not os.path.exists(base_path):
+        base_path = os.path.join(base_dir, "templates", "c19_nokia", "phone_base.png")
+
+    if not os.path.exists(base_path):
+        r, g, b = parse_hex_color(screen_color or "#b40000")
+        fallback = Image.new("RGB", (1080, 1080), (r, g, b))
+        fallback.save(out_path, "PNG")
+        return out_path
+
+    img = Image.open(base_path).convert("RGB")
+    target_r, target_g, target_b = parse_hex_color(screen_color or "#b40000")
+
+    # If it's already the default retro red (#b40000)
+    if clean_hex in ("b40000", "b40001", "b30000", "b50000"):
+        res = img.copy()
+    else:
+        arr = np.array(img).astype(float)
+        # Red channel represents display brightness (0 = black icon/bezel, 180 = full screen backlight)
+        # Anti-aliased sub-pixels are smoothly mapped without any red contamination
+        brightness = np.clip(arr[:, :, 0] / 180.0, 0.0, 1.0)
+        new_arr = np.zeros_like(arr, dtype=np.uint8)
+        new_arr[:, :, 0] = np.clip(brightness * target_r, 0, 255).astype(np.uint8)
+        new_arr[:, :, 1] = np.clip(brightness * target_g, 0, 255).astype(np.uint8)
+        new_arr[:, :, 2] = np.clip(brightness * target_b, 0, 255).astype(np.uint8)
+        res = Image.fromarray(new_arr)
+
+    # Composite sticker if present
+    if sticker_path and os.path.exists(sticker_path):
+        try:
+            stk_img = Image.open(sticker_path).convert("RGBA")
+            target_h = 76
+            target_w = max(1, int(stk_img.width * (target_h / stk_img.height)))
+            stk_resized = stk_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            pos_x = (1080 - target_w) // 2
+            pos_y = 52
+            res = res.convert("RGBA")
+            res.paste(stk_resized, (pos_x, pos_y), stk_resized)
+            res = res.convert("RGB")
+        except Exception as e:
+            print(f"[Nokia Sticker] Warning: Could not composite sticker: {e}", flush=True)
+
+    res.save(out_path, "PNG")
+    return out_path
+
+
+def get_top_header_text(user_header: Optional[str] = None, song_title: str = "", duration: float = 0.0) -> str:
+    """Read top header from user input or pick a random line from headers.txt, dynamically populating placeholders."""
+    raw_text = ""
+    if user_header and user_header.strip():
+        cleaned = user_header.strip()
+        # If it's a default/placeholder string, ignore and pick from headers.txt
+        if cleaned.lower() not in ("default", "none", "null", "(when lyrics feel too personal...)", "when lyrics feel too personal..."):
+            raw_text = cleaned
+    if not raw_text:
+        headers_file = os.path.join(PROJECT_ROOT, "config", "headers", "headers.txt")
+        if not os.path.exists(headers_file):
+            headers_file = os.path.join(PROJECT_ROOT, "headers.txt")
+        if os.path.exists(headers_file):
+            try:
+                with open(headers_file, "r", encoding="utf-8") as f:
+                    lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+                    if lines:
+                        raw_text = random.choice(lines)
+            except Exception:
+                pass
+    if not raw_text:
+        raw_text = "When Lyrics Feel Too Personal... 🤌🤍"
+
+    clean_title = song_title.strip() if song_title else "This Song"
+    clean_title = re.sub(r'[\(\[\{].*?(official|video|audio|lyrics|feat|ft\.).*?[\)\]\}]', '', clean_title, flags=re.IGNORECASE).strip()
+    if not clean_title:
+        clean_title = song_title.strip() or "This Song"
+
+    dur_str = str(int(round(duration))) if duration > 0 else "30"
+
+    formatted = raw_text
+    formatted = re.sub(r'\{song_name\}', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\{song\}', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\{duration\}', dur_str, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\(Duration\)', dur_str, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\(song name\)', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'"song name"', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\+citadel-font', '', formatted, flags=re.IGNORECASE)
+
+    return formatted
+
+
+def get_intro_header_text(user_intro: Optional[str] = None, song_title: str = "", duration: float = 0.0) -> str:
+    """Read intro text from user input or pick a random line from intro_headers.txt, dynamically populating placeholders."""
+    raw_text = ""
+    if user_intro and user_intro.strip():
+        cleaned = user_intro.strip()
+        if cleaned.lower() not in ("default", "none", "null"):
+            raw_text = cleaned
+
+    if not raw_text:
+        intro_file = os.path.join(PROJECT_ROOT, "config", "headers", "intro_headers.txt")
+        if not os.path.exists(intro_file):
+            intro_file = os.path.join(PROJECT_ROOT, "intro_headers.txt")
+        if os.path.exists(intro_file):
+            try:
+                with open(intro_file, "r", encoding="utf-8") as f:
+                    lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+                    if lines:
+                        raw_text = random.choice(lines)
+            except Exception:
+                pass
+
+    if not raw_text:
+        raw_text = "Close your eyes and feel the music 🤌✨"
+
+    clean_title = song_title.strip() if song_title else "This Song"
+    clean_title = re.sub(r'[\(\[\{].*?(official|video|audio|lyrics|feat|ft\.).*?[\)\]\}]', '', clean_title, flags=re.IGNORECASE).strip()
+    if not clean_title:
+        clean_title = song_title.strip() or "This Song"
+
+    dur_str = str(int(round(duration))) if duration > 0 else "30"
+
+    formatted = raw_text
+    formatted = re.sub(r'\{song_name\}', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\{song\}', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\{duration\}', dur_str, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\(Duration\)', dur_str, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\(song name\)', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'"song name"', clean_title, formatted, flags=re.IGNORECASE)
+    formatted = re.sub(r'\+citadel-font', '', formatted, flags=re.IGNORECASE)
+
+    return formatted
+
+
+
+def get_all_background_videos(folder_paths: Optional[List[str]] = None) -> List[str]:
+    """Retrieve all background video clips from videos/input/ or specified folder(s)/subfolder(s)."""
+    base_input_dir = os.path.join(PROJECT_ROOT, "videos", "input")
+    exts = (".mp4", ".mov", ".mkv", ".webm", ".avi")
+    found_videos = []
+    seen = set()
+
+    target_dirs = []
+    if folder_paths and len(folder_paths) > 0:
+        for fp in folder_paths:
+            fp_clean = (fp or "").strip().replace("\\", "/")
+            if not fp_clean:
+                continue
+            cand = os.path.join(base_input_dir, fp_clean) if not os.path.isabs(fp_clean) else fp_clean
+            if not os.path.exists(cand):
+                cand = os.path.join(PROJECT_ROOT, fp_clean)
+            if os.path.exists(cand):
+                target_dirs.append(cand)
+    else:
+        if os.path.exists(base_input_dir):
+            target_dirs.append(base_input_dir)
+
+    for t_dir in target_dirs:
+        if os.path.isfile(t_dir) and t_dir.lower().endswith(exts):
+            if t_dir not in seen:
+                seen.add(t_dir)
+                found_videos.append(t_dir)
+        elif os.path.isdir(t_dir):
+            for root, _, files in os.walk(t_dir):
+                for f in files:
+                    if f.lower().endswith(exts):
+                        full_path = os.path.join(root, f)
+                        if full_path not in seen:
+                            seen.add(full_path)
+                            found_videos.append(full_path)
+
+    return sorted(found_videos)
+
+
+ASSETS_MANIFEST_PATH = os.path.join(PROJECT_ROOT, "videos", "assets_manifest.json")
+_manifest_lock = threading.Lock()
+_assets_manifest: Optional[Dict[str, Dict[str, Any]]] = None
+
+
+def _load_assets_manifest() -> Dict[str, Dict[str, Any]]:
+    global _assets_manifest
+    with _manifest_lock:
+        if _assets_manifest is not None:
+            return _assets_manifest
+        manifest = {}
+        if os.path.exists(ASSETS_MANIFEST_PATH):
+            try:
+                with open(ASSETS_MANIFEST_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        manifest = data
+            except Exception:
+                manifest = {}
+        _assets_manifest = manifest
+        return _assets_manifest
+
+
+def _save_assets_manifest() -> None:
+    with _manifest_lock:
+        if _assets_manifest is None:
+            return
+        try:
+            os.makedirs(os.path.dirname(ASSETS_MANIFEST_PATH), exist_ok=True)
+            temp_file = ASSETS_MANIFEST_PATH + f".tmp.{os.getpid()}"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(_assets_manifest, f, indent=2)
+            os.replace(temp_file, ASSETS_MANIFEST_PATH)
+        except Exception:
+            pass
+
+
+def _parse_video_fps(fps_str: str) -> float:
+    try:
+        if "/" in str(fps_str):
+            num, den = str(fps_str).split("/")
+            return round(float(num) / float(den), 2)
+        return round(float(fps_str), 2)
+    except Exception:
+        return 30.0
+
+
+def get_video_metadata(video_path: str) -> Dict[str, Any]:
+    """Retrieve video metadata (duration, width, height, fps) using local manifest cache."""
+    if not os.path.exists(video_path):
+        return {"duration": 0.0, "width": 0, "height": 0, "fps": 0.0}
+
+    filename = os.path.basename(video_path)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        rel_key = os.path.relpath(os.path.abspath(video_path), base_dir).replace("\\", "/")
+    except Exception:
+        rel_key = filename
+
+    try:
+        stat = os.stat(video_path)
+        mtime = stat.st_mtime
+        size = stat.st_size
+    except Exception:
+        stat = None
+        mtime = 0.0
+        size = 0
+
+    manifest = _load_assets_manifest()
+    entry = manifest.get(filename) or manifest.get(rel_key)
+    if entry and isinstance(entry, dict) and "duration" in entry:
+        cached_mtime = entry.get("mtime")
+        cached_size = entry.get("size")
+        # If mtime and size match (or if manual entry without mtime/size), use cache
+        if cached_mtime is None or (stat is not None and cached_mtime == mtime and cached_size == size):
+            return entry
+
+    # Probe via ffprobe
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height,r_frame_rate:format=duration",
+        "-of", "json",
+        video_path,
+    ]
+    dur = 0.0
+    width = 0
+    height = 0
+    fps = 30.0
+    try:
+        probe = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        data = json.loads(probe.stdout)
+        if "format" in data and "duration" in data["format"]:
+            dur = max(0.0, float(data["format"]["duration"]))
+        streams = data.get("streams", [])
+        if streams:
+            width = int(streams[0].get("width", 0))
+            height = int(streams[0].get("height", 0))
+            fps = _parse_video_fps(streams[0].get("r_frame_rate", "30/1"))
+    except Exception:
+        pass
+
+    meta = {
+        "duration": round(dur, 2),
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "mtime": mtime,
+        "size": size,
+    }
+
+    if dur > 0.0 and stat is not None:
+        with _manifest_lock:
+            manifest[filename] = meta
+        _save_assets_manifest()
+
+    return meta
+
+
+def get_video_duration(video_path: str) -> float:
+    """Return a background clip's duration, using local manifest cache when valid."""
+    meta = get_video_metadata(video_path)
+    return float(meta.get("duration", 0.0))
+
+
+def prepare_background_assets(
+    is_yt_hindi: bool,
+    film_burn_intro: bool = False,
+    bg_folders: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Discover and probe background assets while audio/lyrics are loading.
+
+    This stage intentionally does not choose random clips or create rendered
+    derivatives. Those operations depend on the final lyric timeline and are
+    kept in the renderer. It is therefore safe to run this function in
+    parallel with yt-dlp and lyric-provider requests.
+    """
+    prepared: Dict[str, Any] = {
+        "background_videos": [],
+        "background_durations": {},
+        "film_overlays": [],
+        "film_burn_sounds": [],
+    }
+    if not is_yt_hindi:
+        return prepared
+
+    background_videos = get_all_background_videos(folder_paths=bg_folders)
+    prepared["background_videos"] = background_videos
+    if background_videos:
+        durations: Dict[str, float] = {}
+        missing_videos: List[str] = []
+        manifest = _load_assets_manifest()
+
+        for vpath in background_videos:
+            fname = os.path.basename(vpath)
+            entry = manifest.get(fname)
+            try:
+                stat = os.stat(vpath)
+                if (
+                    entry
+                    and isinstance(entry, dict)
+                    and "duration" in entry
+                    and (entry.get("mtime") is None or (entry.get("mtime") == stat.st_mtime and entry.get("size") == stat.st_size))
+                ):
+                    durations[vpath] = float(entry["duration"])
+                    continue
+            except Exception:
+                pass
+            missing_videos.append(vpath)
+
+        if missing_videos:
+            max_workers = min(4, len(missing_videos))
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="bg-probe") as probe_pool:
+                probed_durs = list(probe_pool.map(get_video_duration, missing_videos))
+                for vpath, dur in zip(missing_videos, probed_durs):
+                    durations[vpath] = dur
+
+        prepared["background_durations"] = durations
+
+    if film_burn_intro:
+        prepared["film_overlays"] = get_all_film_overlays()
+        prepared["film_burn_sounds"] = get_all_film_burn_sound_effects()
+
+    return prepared
+
+
+def _asset_cache_path(source_path: str, profile: str, extension: str = ".mp4") -> str:
+    """Build a cache key that changes when the source asset changes."""
+    source = os.path.abspath(source_path)
+    stat = os.stat(source)
+    identity = f"{source}|{stat.st_size}|{stat.st_mtime_ns}|{profile}".encode("utf-8")
+    digest = hashlib.sha1(identity).hexdigest()[:16]
+    cache_dir = os.path.join(PROJECT_ROOT, "videos", "cache", profile)
+    os.makedirs(cache_dir, exist_ok=True)
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(source).stem)[:60].strip("_") or "asset"
+    return os.path.join(cache_dir, f"{stem}_{digest}{extension}")
+
+
+def normalize_video_asset(source_path: str, width: int, height: int, fps: int) -> str:
+    """Return a cached, frame-rate/pixel-format normalized video derivative."""
+    if not source_path or not os.path.exists(source_path):
+        return source_path
+
+    profile = f"video_{width}x{height}_{fps}fps"
+    try:
+        cached_path = _asset_cache_path(source_path, profile)
+    except OSError:
+        return source_path
+    if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+        return cached_path
+
+    # A fixed ``.part`` name races when two generations normalize the same
+    # source concurrently. Keep each in-flight derivative isolated, then use
+    # the atomic replace below to publish it to the cache.
+    temporary_path = (
+        f"{cached_path}.{os.getpid()}_{threading.get_ident()}_{time.time_ns()}.part.mp4"
+    )
+    command = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", source_path,
+        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,fps={fps},format=yuv420p",
+        "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-f", "mp4",
+        temporary_path,
+    ]
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if os.path.exists(temporary_path) and os.path.getsize(temporary_path) > 0:
+            os.replace(temporary_path, cached_path)
+            return cached_path
+    except Exception as error:
+        emit_progress("asset_cache_warning", 72, f"Asset normalization skipped for {os.path.basename(source_path)}: {type(error).__name__}")
+    finally:
+        if os.path.exists(temporary_path):
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
+    return source_path
+
+
+def normalize_audio_asset(source_path: str) -> str:
+    """Return a cached 44.1 kHz stereo AAC derivative for sound effects."""
+    if not source_path or not os.path.exists(source_path):
+        return source_path
+
+    try:
+        cached_path = _asset_cache_path(source_path, "audio_44100_stereo", ".m4a")
+    except OSError:
+        return source_path
+    if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+        return cached_path
+
+    temporary_path = (
+        f"{cached_path}.{os.getpid()}_{threading.get_ident()}_{time.time_ns()}.part.m4a"
+    )
+    command = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", source_path,
+        "-vn", "-ar", "44100", "-ac", "2",
+        "-c:a", "aac", "-b:a", "192k",
+        "-f", "ipod",
+        temporary_path,
+    ]
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if os.path.exists(temporary_path) and os.path.getsize(temporary_path) > 0:
+            os.replace(temporary_path, cached_path)
+            return cached_path
+    except Exception as error:
+        emit_progress("asset_cache_warning", 72, f"Audio normalization skipped for {os.path.basename(source_path)}: {type(error).__name__}")
+    finally:
+        if os.path.exists(temporary_path):
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
+    return source_path
+
+
+def get_random_background_video(bg_folders: Optional[List[str]] = None) -> Optional[str]:
+    """Select a random background video clip from videos/input/ or specified folder(s)."""
+    videos = get_all_background_videos(folder_paths=bg_folders)
+    return random.choice(videos) if videos else None
+
+
+def get_all_film_overlays() -> List[str]:
+    """Retrieve all authentic film overlay video clips from 'FILM OVERLAY/' directory."""
+    folder = os.path.join(PROJECT_ROOT, "FILM OVERLAY")
+    if os.path.exists(folder):
+        exts = (".mp4", ".mov", ".mkv", ".webm")
+        return [
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if f.lower().endswith(exts) and not f.startswith(".")
+        ]
+    return []
+
+
+def get_all_film_burn_sound_effects() -> List[str]:
+    """Return sound effects reserved for the YT Hindi Film Burn intro."""
+    folder = os.path.join(PROJECT_ROOT, "sound effect", "film burn")
+    if not os.path.exists(folder):
+        return []
+    exts = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg")
+    return [
+        os.path.join(folder, name)
+        for name in os.listdir(folder)
+        if name.lower().endswith(exts) and not name.startswith(".")
+    ]
+
+
+def _resolve_emoji_png_path(emoji_text: str) -> Optional[str]:
+    """Find PNG asset for emoji in emoji_assets/ or fallback to emoji-datasource-apple."""
+    hex_code = "-".join(f"{ord(c):x}" for c in emoji_text if ord(c) != 0xfe0f).lower()
+    local_dir = os.path.join(PROJECT_ROOT, "emoji_assets")
+    png_path = os.path.join(local_dir, f"{hex_code}.png")
+    if os.path.exists(png_path):
+        return png_path
+
+    hex_code_single = f"{ord(emoji_text[0]):x}".lower()
+    png_path_single = os.path.join(local_dir, f"{hex_code_single}.png")
+    if os.path.exists(png_path_single):
+        return png_path_single
+
+    # Fallback to emoji-datasource-apple package if installed
+    nm_dir = os.path.join(PROJECT_ROOT, "node_modules", "emoji-datasource-apple", "img", "apple", "64")
+    if os.path.exists(nm_dir):
+        for candidate_hex in (hex_code, hex_code_single, f"{hex_code}-fe0f", f"{hex_code_single}-fe0f"):
+            cand_path = os.path.join(nm_dir, f"{candidate_hex}.png")
+            if os.path.exists(cand_path):
+                try:
+                    os.makedirs(local_dir, exist_ok=True)
+                    target = os.path.join(local_dir, f"{hex_code}.png")
+                    shutil.copy2(cand_path, target)
+                    return target
+                except Exception:
+                    return cand_path
+    return None
+
+
+def create_header_overlay_image(
+    header_text: str,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
+    top_margin_height: int = 600,
+    output_png_path: str = "header_overlay.png"
+) -> str:
+    """
+    Renders a centered Georgia Italic header with inline Apple-style PNG emojis
+    and optional yellow highlight spans (e.g. {word}yellow or (word)*).
+    Positioned elegantly just above the video rectangle with a small gap.
+    Saves a transparent RGBA image matching the canvas dimensions.
+    """
+    img = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
+    if not header_text or not header_text.strip():
+        img.save(output_png_path, "PNG")
+        return output_png_path
+
+    draw = ImageDraw.Draw(img)
+
+    scale = canvas_width / 1080.0
+    font_size = int(32 * scale)
+    font_paths = [
+        "C:/Windows/Fonts/georgiai.ttf",
+        "C:/Windows/Fonts/georgia.ttf",
+        os.path.join(PROJECT_ROOT, "fonts", "CormorantGaramond-Italic.ttf"),
+        os.path.join(PROJECT_ROOT, "fonts", "EBGaramond-Variable.ttf")
+    ]
+    font = None
+    for fp in font_paths:
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, font_size)
+                break
+            except Exception:
+                continue
+    if font is None:
+        font = ImageFont.load_default()
+
+    # Parse spans for yellow highlights: e.g. {word}yellow or (word)* or (word)yellow
+    span_pattern = re.compile(r'(?:\{([^}]+)\}|\(([^)]+)\))\s*(?:yellow|\*)', re.IGNORECASE)
+    chunks = []
+    last_end = 0
+    for m in span_pattern.finditer(header_text):
+        if m.start() > last_end:
+            chunks.append((header_text[last_end:m.start()], False))
+        highlighted = m.group(1) or m.group(2) or ""
+        chunks.append((highlighted, True))
+        last_end = m.end()
+    if last_end < len(header_text):
+        chunks.append((header_text[last_end:], False))
+
+    emoji_pattern = re.compile(
+        r'([\U00010000-\U0010ffff][\ufe00-\ufe0f]?|[\u2600-\u27bf][\ufe00-\ufe0f]?|\u2764[\ufe00-\ufe0f]?)'
+    )
+    tokens = []
+    WHITE_COLOR = (255, 255, 255, 245)
+    YELLOW_COLOR = (255, 212, 63, 255)
+
+    for chunk_text, is_yellow in chunks:
+        color = YELLOW_COLOR if is_yellow else WHITE_COLOR
+        last_idx = 0
+        for m in emoji_pattern.finditer(chunk_text):
+            if m.start() > last_idx:
+                txt_part = re.sub(r'[\ufe00-\ufe0f]', '', chunk_text[last_idx:m.start()])
+                if txt_part:
+                    tokens.append(("text", txt_part, color))
+            tokens.append(("emoji", m.group(), color))
+            last_idx = m.end()
+        if last_idx < len(chunk_text):
+            txt_part = re.sub(r'[\ufe00-\ufe0f]', '', chunk_text[last_idx:])
+            if txt_part:
+                tokens.append(("text", txt_part, color))
+
+    emoji_size = int(font_size * 1.1)
+    measured_tokens = []
+    total_w = 0
+    for t_type, t_val, color in tokens:
+        if t_type == "text":
+            bbox = draw.textbbox((0, 0), t_val, font=font)
+            w = bbox[2] - bbox[0]
+            measured_tokens.append((t_type, t_val, color, w))
+            total_w += w
+        else:
+            w = emoji_size + int(6 * scale)
+            measured_tokens.append((t_type, t_val, color, w))
+            total_w += w
+
+    start_x = max(10, (canvas_width - total_w) // 2)
+    gap = int(24 * scale)
+    y_pos = int(top_margin_height - font_size - gap)
+
+    curr_x = start_x
+    for t_type, t_val, color, w in measured_tokens:
+        if t_type == "text":
+            draw.text((curr_x, y_pos), t_val, font=font, fill=color)
+            curr_x += w
+        else:
+            png_path = _resolve_emoji_png_path(t_val)
+            if png_path and os.path.exists(png_path):
+                try:
+                    emoji_img = Image.open(png_path).convert("RGBA")
+                    emoji_img = emoji_img.resize((emoji_size, emoji_size), Image.Resampling.LANCZOS)
+                    e_y = y_pos + (font_size - emoji_size) // 2 + int(2 * scale)
+                    img.paste(emoji_img, (curr_x, e_y), emoji_img)
+                except Exception:
+                    pass
+            else:
+                print(f"[Emoji Info] Missing local asset for {t_val}")
+            curr_x += w
+
+    img.save(output_png_path, "PNG")
+    return output_png_path
+
+
+def create_intro_overlay_image(
+    intro_text: str,
+    canvas_width: int = 1080,
+    canvas_height: int = 1920,
+    output_png_path: str = "intro_overlay.png"
+) -> str:
+    """
+    Renders centered intro text supporting:
+    1. {highlighted text}yellow or (word)* syntax -> warm aesthetic yellow (#FFD43F)
+    2. Default white text -> (255, 255, 255, 245)
+    3. Inline Apple emojis composited from emoji_assets
+    """
+    img = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
+    if not intro_text or not intro_text.strip():
+        img.save(output_png_path, "PNG")
+        return output_png_path
+
+    draw = ImageDraw.Draw(img)
+    scale = canvas_width / 1080.0
+    font_size = int(36 * scale)
+    font_paths = [
+        "C:/Windows/Fonts/georgiai.ttf",
+        "C:/Windows/Fonts/georgia.ttf",
+        os.path.join(PROJECT_ROOT, "fonts", "CormorantGaramond-Italic.ttf"),
+        os.path.join(PROJECT_ROOT, "fonts", "EBGaramond-Variable.ttf")
+    ]
+    font = None
+    for fp in font_paths:
+        if os.path.exists(fp):
+            try:
+                font = ImageFont.truetype(fp, font_size)
+                break
+            except Exception:
+                continue
+    if font is None:
+        font = ImageFont.load_default()
+
+    # Parse spans for yellow highlights: e.g. {This Masterpiece>>>}yellow or (word)* or (word)yellow
+    span_pattern = re.compile(r'(?:\{([^}]+)\}|\(([^)]+)\))\s*(?:yellow|\*)', re.IGNORECASE)
+    chunks = []
+    last_end = 0
+    for m in span_pattern.finditer(intro_text):
+        if m.start() > last_end:
+            chunks.append((intro_text[last_end:m.start()], False))
+        highlighted = m.group(1) or m.group(2) or ""
+        chunks.append((highlighted, True))
+        last_end = m.end()
+    if last_end < len(intro_text):
+        chunks.append((intro_text[last_end:], False))
+
+    emoji_pattern = re.compile(
+        r'([𐀀-􏿿][︀-️]?|[☀-➿][︀-️]?|❤[︀-️]?)'
+    )
+    tokens = []
+    WHITE_COLOR = (255, 255, 255, 245)
+    YELLOW_COLOR = (255, 212, 63, 255)
+
+    for chunk_text, is_yellow in chunks:
+        color = YELLOW_COLOR if is_yellow else WHITE_COLOR
+        last_idx = 0
+        for m in emoji_pattern.finditer(chunk_text):
+            if m.start() > last_idx:
+                txt_part = re.sub(r'[︀-️]', '', chunk_text[last_idx:m.start()])
+                if txt_part:
+                    tokens.append(("text", txt_part, color))
+            tokens.append(("emoji", m.group(), color))
+            last_idx = m.end()
+        if last_idx < len(chunk_text):
+            txt_part = re.sub(r'[︀-️]', '', chunk_text[last_idx:])
+            if txt_part:
+                tokens.append(("text", txt_part, color))
+
+    emoji_size = int(font_size * 1.1)
+    measured_tokens = []
+    total_w = 0
+    for t_type, t_val, color in tokens:
+        if t_type == "text":
+            bbox = draw.textbbox((0, 0), t_val, font=font)
+            w = bbox[2] - bbox[0]
+            measured_tokens.append((t_type, t_val, color, w))
+            total_w += w
+        else:
+            w = emoji_size + int(6 * scale)
+            measured_tokens.append((t_type, t_val, color, w))
+            total_w += w
+
+    # Keep Film Burn intro text inside the portrait-safe area. If the full
+    # header is too wide, break it at word boundaries and center the two
+    # resulting lines instead of allowing it to run off the canvas.
+    max_line_width = int(canvas_width * 0.86)
+    lines = [measured_tokens]
+    if total_w > max_line_width:
+        units = []
+        for t_type, t_val, color, _ in measured_tokens:
+            if t_type == "text":
+                for part in re.findall(r"\S+\s*|\s+", t_val):
+                    if part.isspace() and not units:
+                        continue
+                    bbox = draw.textbbox((0, 0), part, font=font)
+                    units.append((t_type, part, color, bbox[2] - bbox[0]))
+            else:
+                units.append((t_type, t_val, color, emoji_size + int(6 * scale)))
+
+        # Choose one whitespace break near the middle, guaranteeing no more
+        # than two lines for the Film Burn intro.
+        whitespace_breaks = [
+            index for index, unit in enumerate(units)
+            if unit[0] == "text" and unit[1].isspace()
+        ]
+        if whitespace_breaks:
+            target_width = sum(unit[3] for unit in units) / 2.0
+            running_width = 0
+            break_index = whitespace_breaks[0]
+            best_distance = float("inf")
+            for index, unit in enumerate(units):
+                running_width += unit[3]
+                if index in whitespace_breaks:
+                    distance = abs(running_width - target_width)
+                    if distance < best_distance:
+                        best_distance = distance
+                        break_index = index
+            first_line = units[:break_index]
+            second_line = units[break_index + 1:]
+            while first_line and first_line[-1][0] == "text" and first_line[-1][1].isspace():
+                first_line.pop()
+            while second_line and second_line[0][0] == "text" and second_line[0][1].isspace():
+                second_line.pop(0)
+            lines = [line for line in (first_line, second_line) if line]
+        else:
+            lines = [units]
+
+    line_height = int(font_size * 1.25)
+    block_height = max(1, len(lines)) * line_height
+    first_y = int((canvas_height - block_height) // 2)
+
+    for line_index, line in enumerate(lines):
+        line_width = sum(item[3] for item in line)
+        curr_x = max(10, (canvas_width - line_width) // 2)
+        y_pos = first_y + line_index * line_height
+        for t_type, t_val, color, w in line:
+            if t_type == "text":
+                draw.text((curr_x, y_pos), t_val, font=font, fill=color)
+                curr_x += w
+            else:
+                png_path = _resolve_emoji_png_path(t_val)
+                if png_path and os.path.exists(png_path):
+                    try:
+                        emoji_img = Image.open(png_path).convert("RGBA")
+                        emoji_img = emoji_img.resize((emoji_size, emoji_size), Image.Resampling.LANCZOS)
+                        emoji_y = y_pos - int(2 * scale)
+                        img.paste(emoji_img, (curr_x, emoji_y), emoji_img)
+                    except Exception:
+                        pass
+                curr_x += w
+
+    img.save(output_png_path, "PNG")
+    return output_png_path
+
+
+def create_lyric_line_overlay_image(
+    text: str,
+    rect_w: int = 1080,
+    rect_h: int = 720,
+    font_name: str = "EB Garamond",
+    base_font_size: int = 50,
+    output_png_path: str = "line_overlay.png"
+) -> str:
+    """
+    Renders a single lyric line centered horizontally and vertically
+    on a transparent RGBA image of size (rect_w, rect_h).
+    Guarantees that the text NEVER exceeds 88% of the video rectangle width (950px on 1080p).
+    """
+    img = Image.new("RGBA", (rect_w, rect_h), (0, 0, 0, 0))
+    if not text or not text.strip():
+        img.save(output_png_path, "PNG")
+        return output_png_path
+
+    clean_text = text.strip()
+    # Preserves natural casing or formats all-caps to sentence case
+    letters = [c for c in clean_text if c.isalpha()]
+    if letters and all(c.isupper() for c in letters) and len(letters) > 3:
+        clean_text = clean_text.capitalize()
+
+    draw = ImageDraw.Draw(img)
+    scale = rect_w / 1080.0
+    target_font_size = int(base_font_size * scale)
+
+    font_paths = [
+        os.path.join(PROJECT_ROOT, "fonts", "EBGaramond-Variable.ttf"),
+        os.path.join(PROJECT_ROOT, "fonts", "CormorantGaramond-Regular.ttf"),
+        "C:/Windows/Fonts/georgia.ttf"
+    ]
+
+    def get_font(size: int):
+        for fp in font_paths:
+            if os.path.exists(fp):
+                try:
+                    return ImageFont.truetype(fp, size)
+                except Exception:
+                    continue
+        return ImageFont.load_default()
+
+    font = get_font(target_font_size)
+    max_allowed_w = int(rect_w * 0.88)  # Safe 88% inner area (950px on 1080p)
+
+    # Auto-scale font size down until text width <= max_allowed_w
+    bbox = draw.textbbox((0, 0), clean_text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    while text_w > max_allowed_w and target_font_size > int(20 * scale):
+        target_font_size = max(int(20 * scale), int(target_font_size * (max_allowed_w / max(1, text_w)) * 0.98))
+        font = get_font(target_font_size)
+        bbox = draw.textbbox((0, 0), clean_text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+
+    x_pos = (rect_w - text_w) // 2
+    y_pos = (rect_h - text_h) // 2
+
+    draw.text((x_pos, y_pos), clean_text, font=font, fill=(255, 255, 255, 255))
+    img.save(output_png_path, "PNG")
+    return output_png_path
+
+
+
+
+
+
+def build_ass_and_lrc_content(
+    cues: List[Tuple[float, float, str]],
+    output_ass_path: str = "lyrics.ass",
+    offset_seconds: float = 0.0,
+    audio_duration: float = 180.0,
+    aspect_ratio: str = "portrait",
+    font_name: str = "Impact",
+    font_size: Optional[int] = None,
+    template_key: Optional[str] = "template1",
+    placement: str = "center",
+    y_percent: Optional[float] = 50.0,
+    x_percent: Optional[float] = 50.0,
+    brat_theme: str = "green",
+    brat_bold: bool = False,
+    brat_casing: str = "upper",
+    blur_amount: Optional[float] = None,
+    spacing: Optional[int] = None,
+    word_spacing: Optional[int] = None
+) -> Tuple[str, List[Dict[str, Any]], str]:
+    """
+    Convert cues into ASS subtitle format configured with Template presets (1, 2, 3, 4 Brat),
+    custom typography, dynamic reflow, and interactive dynamic placement (Center default).
+    """
+    tpl_id = (template_key or "").lower().strip()
+    is_yt_hindi = tpl_id in ("yt_hindi_type", "yt_hindi_intro")
+    is_master = (tpl_id == "master_lyrics")
+    is_nokia = (tpl_id in ("c19_nokia", "c19 nokia", "nokia"))
+    if tpl_id in ["template4", "brat", "template_brat", "template4_brat", "template_4_brat"]:
+        tpl = TEMPLATES["template4_brat"]
+        is_brat = True
+    elif is_yt_hindi:
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["yt_hindi_type"])
+        is_brat = False
+    elif is_master:
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["master_lyrics"])
+        is_brat = False
+    elif is_nokia:
+        tpl = TEMPLATES.get("c19_nokia", TEMPLATES["c19_nokia"])
+        is_brat = False
+    else:
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["template1"])
+        is_brat = False
+
+    effective_aspect = aspect_ratio or tpl["aspect_ratio"]
+    is_portrait = (effective_aspect.lower() == "portrait" or effective_aspect == "9:16")
+
+    # Font handling
+    if is_brat:
+        effective_font = "Arial Narrow" if not font_name or font_name == "Impact" else font_name
+    elif is_yt_hindi:
+        effective_font = font_name if font_name and font_name != "Impact" else "EB Garamond"
+    elif is_nokia:
+        effective_font = "Nokia Cellphone FC" if not font_name or font_name in ("Impact", "Silkscreen") else font_name
+    else:
+        effective_font = font_name if font_name and font_name != "Impact" else tpl["font_name"]
+
+    emit_progress("ass_start", 60, f"Step 2: Applying {tpl['name']} ({'Portrait 9:16' if is_portrait else 'Landscape 16:9'}) with '{placement}' placement...")
+
+    if not cues:
+        cues = [
+            (2.0, max(6.0, audio_duration - 2.0), "[Music Playing - Native YouTube Audio]")
+        ]
+
+    # Configure canvas resolution & 1080p Normalization (Matches 360px Browser Preview 1:1)
+    res_x = 1080 if is_portrait else 1920
+    res_y = 1920 if is_portrait else 1080
+    if is_nokia:
+        res_x = 1080
+        res_y = 1080
+    scale_factor = res_x / 360.0  # 3.0 for 1080x1920 portrait
+    margin_l = int(res_x * 0.08)
+    margin_r = int(res_x * 0.08)
+
+    # Dynamic Placement configuration (Exact 1:1 Center Anchor with Live Layer)
+    place_mode = (placement or "center").lower().strip()
+    x_pos_val = float(x_percent) if x_percent is not None else 50.0
+    y_pos_val = float(y_percent) if y_percent is not None else 50.0
+
+    target_x = int(res_x * (x_pos_val / 100.0))
+    target_y = int(res_y * (y_pos_val / 100.0))
+    pos_override_tag = f"{{\\an5\\pos({target_x},{target_y})}}"
+    alignment = 5
+    margin_v = 0
+
+    # Brat theme styling
+    if is_brat:
+        b_theme = BRAT_THEMES.get((brat_theme or "green").lower(), BRAT_THEMES["green"])
+        primary_color = b_theme["text_color"]
+        outline_color = b_theme.get("outline_color", "&H00000000")
+        back_color = "&H00000000"
+        bold_val = -1 if brat_bold else b_theme.get("bold", 0)
+        scale_x_val = b_theme.get("scale_x", 68)
+        raw_spacing = int(spacing) if spacing is not None else b_theme.get("spacing", -1)
+        strikeout_val = b_theme.get("strikeout", 0)
+        outline_width = int(b_theme.get("outline_width", 0) * scale_factor)
+        shadow_depth = int(b_theme.get("shadow_depth", 0) * scale_factor)
+        if b_theme.get("font_name"):
+            effective_font = b_theme["font_name"]
+    elif is_yt_hindi:
+        primary_color = "&H00FFFFFF"
+        outline_color = "&H00000000"
+        back_color = "&H00000000"
+        bold_val = 0
+        scale_x_val = 100
+        raw_spacing = int(spacing) if spacing is not None else 0
+        strikeout_val = 0
+        outline_width = 0
+        shadow_depth = 0
+    elif is_nokia:
+        target_x = 75 if (x_percent is None or x_percent == 50.0) else int(res_x * (float(x_percent) / 100.0))
+        target_y = 350 if (y_percent is None or y_percent == 50.0) else int(res_y * (float(y_percent) / 100.0))
+        pos_override_tag = f"{{\\an7\\pos({target_x},{target_y})}}"
+        alignment = 7
+        margin_l = 75
+        margin_r = 75
+        primary_color = "&H00000000"
+        outline_color = "&H00000000"
+        back_color = "&H00000000"
+        bold_val = 1
+        scale_x_val = 100
+        raw_spacing = int(spacing) if spacing is not None else 0
+        strikeout_val = 0
+        outline_width = 0
+        shadow_depth = 0
+    else:
+        primary_color = tpl.get("primary_color", "&H00FFFFFF")
+        outline_color = tpl.get("outline_color", "&H00000000")
+        back_color = tpl.get("back_color", "&H80000000")
+        bold_val = tpl.get("bold", -1)
+        scale_x_val = tpl.get("scale_x", 100)
+        raw_spacing = int(spacing) if spacing is not None else 0
+        strikeout_val = 0
+        outline_width = int(tpl.get("outline_width", 4) * scale_factor)
+        shadow_depth = int(tpl.get("shadow_depth", 3) * scale_factor)
+
+    raw_fs = font_size if font_size and font_size > 0 else (tpl.get("font_size") or 115)
+    if is_nokia:
+        actual_font_size = int(raw_fs) if raw_fs >= 75 else 115
+    elif is_brat:
+        # Brat minimal uses 72pt default, clamped to prevent oversized font sizes inherited from other templates
+        safe_brat_fs = min(raw_fs, 76) if raw_fs else 72
+        actual_font_size = int(safe_brat_fs * scale_factor) if safe_brat_fs <= 140 else int(safe_brat_fs)
+    else:
+        actual_font_size = int(raw_fs * scale_factor) if raw_fs <= 140 else int(raw_fs)
+    spacing_val = int(raw_spacing * scale_factor)
+    w_space_val = int((int(word_spacing) if word_spacing is not None else 0) * scale_factor)
+    if is_brat:
+        eff_blur = 9.6 if (blur_amount is None or blur_amount == 1.5) else float(blur_amount * 6.4)
+    else:
+        eff_blur = float((float(blur_amount) if (blur_amount is not None and blur_amount >= 0) else (tpl.get("blur") or 1.8)) * 8.5)
+
+    def apply_word_spacing(txt: str, let_sp: int, wrd_sp: int) -> str:
+        if not wrd_sp:
+            return txt
+        space_sub = f"{{\\fsp{let_sp + wrd_sp}}} {{\\fsp{let_sp}}}"
+        return txt.replace(" ", space_sub)
+
+    wrap_style = 2 if (is_yt_hindi or is_brat) else 0
+    ass_header = f"""[Script Info]
+; Script generated by YouTube Lyric-Video Overlay Generator
+ScriptType: v4.00+
+PlayResX: {res_x}
+PlayResY: {res_y}
+WrapStyle: {wrap_style}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{effective_font},{actual_font_size},{primary_color},&H000000FF,{outline_color},{back_color},{bold_val},0,0,{strikeout_val},{scale_x_val},100,{spacing_val},0,1,{outline_width},{shadow_depth},{alignment},{margin_l},{margin_r},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+    # Flatten and sanitize cues into strictly 1 line per cue
+    single_line_cues: List[Tuple[float, float, str]] = []
+    for s_t, e_t, raw_t in cues:
+        sub_lines = [l.strip() for l in raw_t.replace("\r", "\n").replace("\\N", "\n").split("\n") if l.strip()]
+        if not sub_lines:
+            continue
+        if len(sub_lines) == 1:
+            clean_l = " ".join(sub_lines[0].split())
+            if clean_l:
+                single_line_cues.append((s_t, e_t, clean_l))
+        else:
+            # Distribute multi-line cue into equal sub-segments
+            n_sub = len(sub_lines)
+            cue_dur = max(0.6, e_t - s_t)
+            sub_dur = cue_dur / n_sub
+            for sub_idx, sl in enumerate(sub_lines):
+                c_sl = " ".join(sl.split())
+                if c_sl:
+                    sub_s = s_t + (sub_idx * sub_dur)
+                    sub_e = s_t + ((sub_idx + 1) * sub_dur) if (sub_idx + 1) < n_sub else e_t
+                    single_line_cues.append((sub_s, sub_e, c_sl))
+
+    # Sort cues by start timestamp
+    single_line_cues.sort(key=lambda x: x[0])
+
+    dialogues = []
+    structured_lines = []
+    raw_lrc_lines = []
+
+    def wrap_brat_ass_words(w_list: List[str], f_obj, s_x: float, max_w: int) -> List[str]:
+        if not w_list:
+            return []
+        wrapped = []
+        cur_line = []
+        for w in w_list:
+            cand = " ".join(cur_line + [w]) if cur_line else w
+            bbox = f_obj.getbbox(cand)
+            cand_w = (bbox[2] - bbox[0]) * (s_x / 100.0)
+            if cur_line and cand_w > max_w:
+                wrapped.append(" ".join(cur_line))
+                cur_line = [w]
+            else:
+                cur_line.append(w)
+        if cur_line:
+            wrapped.append(" ".join(cur_line))
+        return wrapped
+
+    def wrap_lyrics_multiline(txt: str, max_chars: int = 22) -> str:
+        words = txt.split()
+        if not words:
+            return ""
+        lines = []
+        cur_line = []
+        cur_len = 0
+        for w in words:
+            add_len = len(w) + (1 if cur_line else 0)
+            if cur_len + add_len <= max_chars:
+                cur_line.append(w)
+                cur_len += add_len
+            else:
+                if cur_line:
+                    lines.append(" ".join(cur_line))
+                cur_line = [w]
+                cur_len = len(w)
+        if cur_line:
+            lines.append(" ".join(cur_line))
+        return r"\N".join(lines)
+
+    for i, (start_t, end_t, text) in enumerate(single_line_cues):
+        adjusted_start = max(0.0, start_t + offset_seconds)
+        if (is_yt_hindi or is_brat) and (i + 1 < len(single_line_cues)):
+            next_start = max(0.0, single_line_cues[i + 1][0] + offset_seconds)
+            adjusted_end = min(max(adjusted_start + 0.4, end_t + offset_seconds), next_start) if next_start > adjusted_start else max(adjusted_start + 0.5, end_t + offset_seconds)
+        else:
+            adjusted_end = max(adjusted_start + 0.5, end_t + offset_seconds)
+        clean_text = text.replace("{", "\\{").replace("}", "\\}").replace("\n", " ").replace("\\N", " ").strip()
+
+        if is_brat:
+            display_text = clean_text.lower() if (brat_casing or "").lower() == "lower" else clean_text.upper()
+            words = [w for w in display_text.split() if w.strip()]
+            num_words = len(words)
+            if num_words == 0:
+                words = [display_text]
+                num_words = 1
+
+            line_dur = max(0.5, adjusted_end - adjusted_start)
+            type_dur = min(line_dur * 0.85, max(0.4, num_words * 0.28))
+            step_t = type_dur / num_words
+
+            # Dynamic auto-fit: calculate font size so the accumulated cue NEVER overflows the central safe box
+            max_safe_w = int(res_x * 0.82)
+            max_safe_h = int(res_y * 0.68)
+
+            cue_fs = actual_font_size
+            while cue_fs > 38:
+                font_obj = get_pillow_font(effective_font, cue_fs, bold=brat_bold)
+                full_lines = wrap_brat_ass_words(words, font_obj, scale_x_val, max_safe_w)
+                line_h = int(cue_fs * 1.05)
+                total_h = len(full_lines) * line_h
+                max_line_w = 0
+                for l in full_lines:
+                    bbox = font_obj.getbbox(l)
+                    lw = (bbox[2] - bbox[0]) * (scale_x_val / 100.0) + (len(l) * spacing_val)
+                    if lw > max_line_w:
+                        max_line_w = lw
+                if max_line_w <= max_safe_w and total_h <= max_safe_h:
+                    break
+                cue_fs -= 4
+            cue_fs = max(38, cue_fs)
+            font_obj = get_pillow_font(effective_font, cue_fs, bold=brat_bold)
+
+            accumulated_words = []
+            for w_idx in range(num_words):
+                accumulated_words.append(words[w_idx])
+                step_lines = wrap_brat_ass_words(accumulated_words, font_obj, scale_x_val, max_safe_w)
+                wrapped_text = r"\N".join(step_lines)
+                text_string = apply_word_spacing(wrapped_text, spacing_val, w_space_val)
+                
+                w_start = adjusted_start + (w_idx * step_t)
+                w_end = adjusted_start + ((w_idx + 1) * step_t) if (w_idx + 1) < num_words else adjusted_end
+
+                brat_inline_tag = f"{{\\fs{cue_fs}\\fsp{spacing_val}\\blur{eff_blur:.1f}}}"
+                dlg_text = f"{pos_override_tag}{brat_inline_tag}{text_string}" if pos_override_tag else f"{brat_inline_tag}{text_string}"
+                dialogues.append(f"Dialogue: 0,{seconds_to_ass_timestamp(w_start)},{seconds_to_ass_timestamp(w_end)},Default,,0,0,0,,{dlg_text}")
+        elif is_yt_hindi:
+            # YT Hindi Type: Preserves original casing or formats all-caps to sentence case
+            letters = [c for c in clean_text if c.isalpha()]
+            if letters and all(c.isupper() for c in letters) and len(letters) > 3:
+                clean_text = clean_text.capitalize()
+
+            # Dynamic scaling so the line ALWAYS fits on 1 single line
+            line_len = len(clean_text)
+            if line_len > 45:
+                cur_fs = int(actual_font_size * 0.52)
+            elif line_len > 32:
+                cur_fs = int(actual_font_size * 0.62)
+            elif line_len > 22:
+                cur_fs = int(actual_font_size * 0.74)
+            elif line_len > 14:
+                cur_fs = int(actual_font_size * 0.86)
+            else:
+                cur_fs = actual_font_size
+
+
+            wrapped_text = clean_text  # Never wrap, strictly 1 single centered line
+            formatted_clean = apply_word_spacing(wrapped_text, spacing_val, w_space_val)
+            fade_tag = r"{\fad(220,220)}"
+            inline_tag = f"{{\\fs{cur_fs}\\fsp{spacing_val}}}"
+            dialogue_text = f"{pos_override_tag}{fade_tag}{inline_tag}{formatted_clean}" if pos_override_tag else f"{fade_tag}{inline_tag}{formatted_clean}"
+            dialogues.append(f"Dialogue: 0,{seconds_to_ass_timestamp(adjusted_start)},{seconds_to_ass_timestamp(adjusted_end)},Default,,0,0,0,,{dialogue_text}")
+
+        elif is_nokia:
+            # Word-by-word accumulation in Nokia Cellphone FC font
+            display_text = clean_text.lower()
+            words = [w for w in display_text.split() if w.strip()]
+            num_words = len(words)
+            if num_words == 0:
+                words = [display_text]
+                num_words = 1
+
+            line_dur = max(0.5, adjusted_end - adjusted_start)
+            type_dur = min(line_dur * 0.85, max(0.4, num_words * 0.28))
+            step_t = type_dur / num_words
+
+            accumulated_words = []
+            for w_idx in range(num_words):
+                accumulated_words.append(words[w_idx])
+                raw_text_string = " ".join(accumulated_words)
+                wrapped_text = wrap_lyrics_multiline(raw_text_string, max_chars=11)
+
+                w_start = adjusted_start + (w_idx * step_t)
+                w_end = adjusted_start + ((w_idx + 1) * step_t) if (w_idx + 1) < num_words else adjusted_end
+
+                nokia_tag = f"{{\\fn{effective_font}\\fs{actual_font_size}\\c&H000000&\\b1}}"
+                dlg_text = f"{pos_override_tag}{nokia_tag}{wrapped_text}" if pos_override_tag else f"{nokia_tag}{wrapped_text}"
+                dialogues.append(f"Dialogue: 0,{seconds_to_ass_timestamp(w_start)},{seconds_to_ass_timestamp(w_end)},Default,,0,0,0,,{dlg_text}")
+
+        else:
+            wrapped_text = wrap_lyrics_multiline(clean_text, max_chars=22)
+            formatted_clean = apply_word_spacing(wrapped_text, spacing_val, w_space_val)
+            inline_tag = f"{{\\fs{actual_font_size}\\fsp{spacing_val}\\blur{eff_blur:.1f}}}"
+            dialogue_text = f"{pos_override_tag}{inline_tag}{formatted_clean}" if pos_override_tag else f"{inline_tag}{formatted_clean}"
+            dialogues.append(f"Dialogue: 0,{seconds_to_ass_timestamp(adjusted_start)},{seconds_to_ass_timestamp(adjusted_end)},Default,,0,0,0,,{dialogue_text}")
+
+        ts_formatted = seconds_to_lrc_timestamp(adjusted_start)
+        structured_lines.append({
+            "index": i,
+            "timestamp": ts_formatted,
+            "timeSeconds": adjusted_start,
+            "endSeconds": adjusted_end,
+            "text": clean_text
+        })
+        raw_lrc_lines.append(f"[{ts_formatted}] {clean_text}")
+
+    with open(output_ass_path, "w", encoding="utf-8") as f:
+        f.write(ass_header + "\n".join(dialogues) + "\n")
+
+
+    raw_lrc = "\n".join(raw_lrc_lines)
+    emit_progress("ass_done", 70, f"Step 2: Applied {tpl['name']} ({len(dialogues)} word accumulation events, {res_x}x{res_y}, {place_mode}).")
+    return output_ass_path, structured_lines, raw_lrc
+
+
+def get_audio_duration(audio_path: str) -> float:
+    """Use ffprobe to get exact audio duration in seconds."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        audio_path
+    ]
+    try:
+        probe = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+        return float(probe.stdout.strip())
+    except Exception:
+        return 180.0
+
+
+# (get_video_duration is implemented above with asset manifest caching)
+
+def get_pillow_font(font_name: str, size: int, bold: bool = False):
+    font_lower = (font_name or "").lower()
+    candidates = []
+    if "impact" in font_lower:
+        candidates.append("C:/Windows/Fonts/impact.ttf")
+    elif "narrow" in font_lower:
+        if bold:
+            candidates.extend(["C:/Windows/Fonts/ARIALNB.TTF", "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/ARIALN.TTF"])
+        else:
+            candidates.extend(["C:/Windows/Fonts/ARIALN.TTF", "C:/Windows/Fonts/ARIALNB.TTF", "C:/Windows/Fonts/arial.ttf"])
+    local_fonts = os.path.join(PROJECT_ROOT, "fonts")
+    if "silk" in font_lower:
+        candidates.append(os.path.join(local_fonts, "Silkscreen-Regular.ttf"))
+    elif "press" in font_lower:
+        candidates.append(os.path.join(local_fonts, "PressStart2P-Regular.ttf"))
+    candidates.append(os.path.join(local_fonts, f"{font_name}.ttf"))
+    candidates.extend([
+        f"C:/Windows/Fonts/{font_lower}.ttf",
+        f"C:/Windows/Fonts/{font_lower}bd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/segoeui.ttf"
+    ])
+    for c in candidates:
+        if c and os.path.exists(c):
+            try:
+                return ImageFont.truetype(c, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def render_exact_pillow_overlay_video(
+    cues: List[Any],
+    audio_path: str,
+    output_path: str,
+    duration: float,
+    aspect_ratio: str = "portrait",
+    font_name: str = "Impact",
+    font_size: Optional[int] = None,
+    template_key: str = "template1",
+    placement: str = "center",
+    y_percent: float = 50.0,
+    x_percent: float = 50.0,
+    brat_theme: str = "green",
+    brat_bold: bool = False,
+    brat_casing: str = "upper",
+    blur_amount: float = 1.8,
+    spacing: Optional[int] = None,
+    word_spacing: Optional[int] = None,
+    offset_seconds: float = 0.0,
+    preview_quality: str = "final"
+) -> str:
+    """Renders 100% pixel-perfect Gaussian blur and word-by-word typography typing using Pillow rasterization and FFmpeg concat overlay."""
+    is_portrait = (aspect_ratio.lower() == "portrait" or aspect_ratio == "9:16")
+    res_w = 1080 if is_portrait else 1920
+    res_h = 1920 if is_portrait else 1080
+
+    tpl_id = (template_key or "").lower().strip()
+    is_brat = tpl_id in ["template4", "brat", "template_brat", "template4_brat", "template_4_brat"]
+
+    if is_brat:
+        b_theme = BRAT_THEMES.get((brat_theme or "green").lower(), BRAT_THEMES["green"])
+        bg_color = b_theme["bg_color"]
+        fill_color_hex = b_theme.get("hex_text", "#000000")
+        eff_font_name = b_theme.get("font_name", "Arial Narrow")
+        is_upper = (brat_casing or "").lower() != "lower"
+        scale_x = 100 if brat_theme == "blue" else 68
+    else:
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["template1"])
+        bg_color = tpl.get("bg_color", "black")
+        fill_color_hex = "#FFFFFF"
+        eff_font_name = font_name or "Impact"
+        is_upper = False
+        scale_x = 100
+
+    hex_clean = fill_color_hex.lstrip("#")
+    if len(hex_clean) == 6:
+        r, g, b = int(hex_clean[0:2], 16), int(hex_clean[2:4], 16), int(hex_clean[4:6], 16)
+        fill_rgba = (r, g, b, 255)
+    else:
+        fill_rgba = (255, 255, 255, 255)
+
+    if is_brat:
+        safe_brat_fs = min(font_size or 72, 76)
+        fs_1080 = int(safe_brat_fs * 3.0)
+        # Tuned blur: 6.6px radius on 1080p, matching 2.2px in CSS
+        blur_rad = float(blur_amount or 1.5) * 4.4
+        bg_clean = bg_color.replace("0x", "").lstrip("#")
+        bg_rgb = (int(bg_clean[0:2], 16), int(bg_clean[2:4], 16), int(bg_clean[4:6], 16))
+    else:
+        fs_1080 = int((font_size or 72) * 3.0)
+        blur_rad = max(0.0, float(blur_amount or 1.8) * 3.5)
+        bg_rgb = (0, 0, 0)
+    font = get_pillow_font(eff_font_name, fs_1080, bold=brat_bold)
+
+    target_x = int(res_w * (float(x_percent or 50.0) / 100.0))
+    target_y = int(res_h * (float(y_percent or 50.0) / 100.0))
+
+    temp_dir = os.path.join(os.path.dirname(output_path), f"temp_cues_{int(time.time()*1000)}")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    if is_brat:
+        blank_img = Image.new("RGB", (res_w, res_h), bg_rgb)
+    else:
+        blank_img = Image.new("RGBA", (res_w, res_h), (0, 0, 0, 0))
+    blank_png_path = os.path.join(temp_dir, "blank.png")
+    blank_img.save(blank_png_path)
+
+    def wrap_lines(txt, max_chars):
+        words = txt.split()
+        if not words:
+            return []
+        lines = []
+        cur = []
+        cur_l = 0
+        for w in words:
+            w_l = len(w)
+            if cur and (cur_l + 1 + w_l > max_chars):
+                lines.append(" ".join(cur))
+                cur = [w]
+                cur_l = w_l
+            else:
+                cur.append(w)
+                cur_l += (1 if cur else 0) + w_l
+        if cur:
+            lines.append(" ".join(cur))
+        return lines
+
+    def _extract_cue_timing(c):
+        if isinstance(c, dict):
+            s = float(c.get("timeSeconds", 0.0))
+            e = float(c.get("endSeconds", s + 2.5))
+            txt = str(c.get("text", ""))
+        elif isinstance(c, (list, tuple)) and len(c) >= 3:
+            s = float(c[0])
+            e = float(c[1])
+            txt = str(c[2])
+        elif isinstance(c, (list, tuple)) and len(c) == 2:
+            s = float(c[0])
+            e = float(c[1])
+            txt = ""
+        else:
+            s = 0.0
+            e = 2.5
+            txt = ""
+        return s, e, txt
+
+    # Flatten and sanitize multi-line cues
+    single_cues = []
+    for c in cues:
+        s_t, e_t, raw_t = _extract_cue_timing(c)
+        sub_lines = [l.strip() for l in raw_t.replace("\r", "\n").replace("\\N", "\n").split("\n") if l.strip()]
+        if not sub_lines:
+            continue
+        if len(sub_lines) == 1:
+            clean_l = " ".join(sub_lines[0].split())
+            if clean_l:
+                single_cues.append((s_t, e_t, clean_l))
+        else:
+            n_sub = len(sub_lines)
+            cue_dur = max(0.6, e_t - s_t)
+            sub_dur = cue_dur / n_sub
+            for sub_idx, sl in enumerate(sub_lines):
+                c_sl = " ".join(sl.split())
+                if c_sl:
+                    sub_s = s_t + (sub_idx * sub_dur)
+                    sub_e = s_t + ((sub_idx + 1) * sub_dur) if (sub_idx + 1) < n_sub else e_t
+                    single_cues.append((sub_s, sub_e, c_sl))
+
+    # Apply offset and sort strictly by start timestamp
+    sorted_cues = []
+    for s_t, e_t, clean_t in single_cues:
+        adj_s = max(0.0, float(s_t) + offset_seconds)
+        adj_e = max(adj_s + 0.4, float(e_t) + offset_seconds)
+        sorted_cues.append((adj_s, adj_e, clean_t))
+    sorted_cues.sort(key=lambda x: x[0])
+
+    # Clamp cue end times to prevent overlapping text and timeline drift
+    clamped_cues = []
+    for i, (s_t, e_t, clean_t) in enumerate(sorted_cues):
+        if i + 1 < len(sorted_cues):
+            next_s = sorted_cues[i + 1][0]
+            if next_s > s_t and e_t > next_s:
+                e_t = next_s
+        clamped_cues.append((s_t, e_t, clean_t))
+
+    concat_lines = []
+    current_t = 0.0
+    cue_img_idx = 0
+
+    for s_t, e_t, clean_t in clamped_cues:
+        if s_t > current_t:
+            gap = s_t - current_t
+            if gap > 0.005:
+                concat_lines.append("file 'blank.png'")
+                concat_lines.append(f"duration {gap:.3f}")
+            current_t = s_t
+        elif s_t < current_t:
+            s_t = current_t
+            e_t = max(s_t + 0.3, e_t)
+
+        disp_text = clean_t.upper() if is_upper else (clean_t.lower() if is_brat else clean_t)
+        
+        if is_brat:
+            words = [w for w in disp_text.split() if w.strip()]
+            num_words = len(words)
+            if num_words == 0:
+                words = [disp_text]
+                num_words = 1
+
+            line_dur = max(0.4, e_t - s_t)
+            type_dur = min(line_dur * 0.85, max(0.3, num_words * 0.28))
+            step_t = type_dur / num_words
+
+            def wrap_brat_words(w_list: List[str], f_obj, s_x: float, max_w: int) -> List[str]:
+                if not w_list:
+                    return []
+                wrapped = []
+                cur_line = []
+                for w in w_list:
+                    cand = " ".join(cur_line + [w]) if cur_line else w
+                    bbox = f_obj.getbbox(cand)
+                    cand_w = (bbox[2] - bbox[0]) * (s_x / 100.0)
+                    if cur_line and cand_w > max_w:
+                        wrapped.append(" ".join(cur_line))
+                        cur_line = [w]
+                    else:
+                        cur_line.append(w)
+                if cur_line:
+                    wrapped.append(" ".join(cur_line))
+                return wrapped
+
+            max_safe_w = int(res_w * 0.82)
+            max_safe_h = int(res_h * 0.68)
+
+            # Dynamic auto-fit calculation so multi-line Pillow Brat frames stay big & punchy (72pt) without clipping off video edges
+            cue_fs = fs_1080
+            while cue_fs > 38:
+                cue_font = get_pillow_font(eff_font_name, cue_fs, bold=brat_bold)
+                full_lines = wrap_brat_words(words, cue_font, scale_x, max_safe_w)
+                line_h = int(cue_fs * 0.88)
+                total_h = len(full_lines) * line_h
+                max_line_w = 0
+                for l in full_lines:
+                    bbox = cue_font.getbbox(l)
+                    lw = (bbox[2] - bbox[0]) * (scale_x / 100.0)
+                    if lw > max_line_w:
+                        max_line_w = lw
+                if max_line_w <= max_safe_w and total_h <= max_safe_h:
+                    break
+                cue_fs -= 4
+            cue_fs = max(38, cue_fs)
+            cue_font = get_pillow_font(eff_font_name, cue_fs, bold=brat_bold)
+            line_h = int(cue_fs * 0.88)
+
+            acc_words = []
+            for w_idx in range(num_words):
+                acc_words.append(words[w_idx])
+                lines = wrap_brat_words(acc_words, cue_font, scale_x, max_safe_w)
+
+                text_img = Image.new("RGBA", (res_w, res_h), (0, 0, 0, 0))
+
+                total_h = len(lines) * line_h
+                start_y = int(target_y - (total_h / 2) + (line_h / 2))
+
+                for l_idx, line in enumerate(lines):
+                    bbox = cue_font.getbbox(line)
+                    lw = bbox[2] - bbox[0]
+                    lh = bbox[3] - bbox[1]
+                    if lw <= 0 or lh <= 0:
+                        continue
+
+                    # Render text to dedicated line buffer with padding to prevent any clipping
+                    pad = 20
+                    line_buf = Image.new("RGBA", (lw + pad * 2, lh + pad * 2), (0, 0, 0, 0))
+                    d = ImageDraw.Draw(line_buf)
+                    d.text((pad - bbox[0], pad - bbox[1]), line, font=cue_font, fill=fill_rgba)
+
+                    # Scale horizontally to match Brat font condense
+                    scaled_lw = max(1, int(line_buf.width * (scale_x / 100.0)))
+                    line_scaled = line_buf.resize((scaled_lw, line_buf.height), Image.Resampling.BICUBIC)
+
+                    # Paste line centered at target_x and its re-centered line y position
+                    paste_x = int(target_x - (scaled_lw / 2))
+                    y_center = start_y + (l_idx * line_h)
+                    paste_y = int(y_center - (line_scaled.height / 2))
+                    text_img.paste(line_scaled, (paste_x, paste_y), line_scaled)
+
+                if blur_rad > 0.1:
+                    text_img = text_img.filter(ImageFilter.GaussianBlur(radius=blur_rad))
+                    r, g, b, a = text_img.split()
+                    a = ImageEnhance.Contrast(a).enhance(1.4)
+                    text_img = Image.merge("RGBA", (r, g, b, a))
+
+                frame = Image.new("RGB", (res_w, res_h), bg_rgb)
+                frame.paste(text_img, (0, 0), text_img)
+
+                cue_file = f"cue_{cue_img_idx:05d}.png"
+                frame.save(os.path.join(temp_dir, cue_file))
+                cue_img_idx += 1
+
+                w_dur = step_t if (w_idx + 1) < num_words else max(0.1, e_t - (s_t + (num_words - 1) * step_t))
+                concat_lines.append(f"file '{cue_file}'")
+                concat_lines.append(f"duration {w_dur:.3f}")
+                current_t += w_dur
+        else:
+            lines = wrap_lines(disp_text, 22)
+            img = Image.new("RGBA", (res_w, res_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
+
+            line_h = int(fs_1080 * 0.92)
+            total_h = len(lines) * line_h
+            start_y = int(target_y - (total_h / 2) + (line_h / 2))
+
+            for l_idx, line in enumerate(lines):
+                y = start_y + (l_idx * line_h)
+                draw.text((target_x, y), line, font=font, fill=fill_rgba, anchor="mm", align="center")
+
+            if blur_rad > 0.1:
+                img = img.filter(ImageFilter.GaussianBlur(radius=blur_rad))
+
+            cue_file = f"cue_{cue_img_idx:05d}.png"
+            img.save(os.path.join(temp_dir, cue_file))
+            cue_img_idx += 1
+
+            dur = max(0.2, e_t - s_t)
+            concat_lines.append(f"file '{cue_file}'")
+            concat_lines.append(f"duration {dur:.3f}")
+            current_t = e_t
+
+    if duration > current_t:
+        concat_lines.append("file 'blank.png'")
+        concat_lines.append(f"duration {duration - current_t:.3f}")
+
+    concat_lines.append("file 'blank.png'")
+
+    manifest_path = os.path.join(temp_dir, "manifest.txt")
+    with open(manifest_path, "w", encoding="utf-8") as mf:
+        mf.write("\n".join(concat_lines) + "\n")
+
+    encoder_name, encoder_flags = get_encoder_for_quality(preview_quality)
+
+    if is_brat:
+        cmd = [
+            "ffmpeg", "-y", "-threads", "0",
+            "-f", "concat", "-safe", "0", "-i", manifest_path,
+            "-i", audio_path,
+            "-vf", "fps=30",
+            "-map", "0:v",
+            "-map", "1:a:0",
+            "-c:v", encoder_name,
+        ] + encoder_flags + [
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-shortest",
+            output_path
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-threads", "0",
+            "-f", "lavfi", "-i", f"color=c={bg_color}:s={res_w}x{res_h}:r=30:d={duration:.2f}",
+            "-f", "concat", "-safe", "0", "-i", manifest_path,
+            "-i", audio_path,
+            "-filter_complex", "[0:v][1:v]overlay=0:0[outv]",
+            "-map", "[outv]",
+            "-map", "2:a:0",
+            "-c:v", encoder_name,
+        ] + encoder_flags + [
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-shortest",
+            output_path
+        ]
+
+    try:
+        subprocess.run(cmd, check=True)
+    finally:
+        for f in os.listdir(temp_dir):
+            try:
+                os.remove(os.path.join(temp_dir, f))
+            except Exception:
+                pass
+        try:
+            os.rmdir(temp_dir)
+        except Exception:
+            pass
+
+    return output_path
+
+
+def render_lyric_video_ffmpeg(
+    audio_path: str,
+    ass_path: str,
+    output_path: str = "output_lyric_video.mp4",
+    duration: Optional[float] = None,
+    aspect_ratio: str = "portrait",
+    bg_color: str = "black",
+    is_brat: bool = False,
+    blur_amount: Optional[float] = None,
+    clean_base: bool = False,
+    preview_quality: str = "final"
+) -> str:
+    """Step 3: Run FFmpeg to render clean base or ASS burned subtitles over MP4 video."""
+    if not duration or duration <= 0:
+        duration = get_audio_duration(audio_path)
+
+    is_portrait = (aspect_ratio.lower() == "portrait" or aspect_ratio == "9:16")
+    res_str = "1080x1920" if is_portrait else "1920x1080"
+    res_w = 1080 if is_portrait else 1920
+    res_h = 1920 if is_portrait else 1080
+
+    encoder_name, encoder_flags = get_encoder_for_quality(preview_quality)
+    mode_desc = "Clean Base Video" if clean_base else "Burned Subtitles Video"
+    emit_progress("ffmpeg_start", 75, f"Step 3: Rendering {res_str} 30fps MP4 {mode_desc} using {encoder_name} (BG: {bg_color}, {duration:.1f}s)...")
+    
+    normalized_ass = ass_path.replace("\\", "/")
+    if ":" in normalized_ass:
+        normalized_ass = normalized_ass.replace(":", "\\:")
+
+    eff_blur = float((float(blur_amount) if (blur_amount is not None and blur_amount >= 0) else (tpl.get("blur") or 1.8)) * 8.5)
+    vf_filter = f"ass={normalized_ass}"
+
+    if clean_base:
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-threads", "0",
+            "-f", "lavfi", "-i", f"color=c={bg_color}:s={res_str}:r=30:d={duration:.2f}",
+            "-i", audio_path,
+            "-c:v", encoder_name,
+        ] + encoder_flags + [
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-shortest",
+            output_path
+        ]
+    else:
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-threads", "0",
+            "-f", "lavfi", "-i", f"color=c={bg_color}:s={res_str}:r=30:d={duration:.2f}",
+            "-i", audio_path,
+            "-vf", vf_filter,
+            "-c:v", encoder_name,
+        ] + encoder_flags + [
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-shortest",
+            output_path
+        ]
+
+    emit_progress("ffmpeg_rendering", 85, f"Step 3: Hardware encoding {res_str} video with {encoder_name}...")
+    subprocess.run(ffmpeg_cmd, check=True)
+    emit_progress("ffmpeg_done", 95, f"Step 3: Video successfully rendered to '{output_path}'.")
+    return output_path
+
+
+def render_nokia_video_ffmpeg(
+    audio_path: str,
+    ass_path: str,
+    output_path: str = "output_lyric_video.mp4",
+    duration: Optional[float] = None,
+    screen_color: str = "#b40000",
+    sticker: Optional[str] = None,
+    preview_quality: str = "final"
+) -> str:
+    """Renders C19 Nokia retro phone 1080x1080 square video with word-by-word lyrics."""
+    if not duration or duration <= 0:
+        duration = get_audio_duration(audio_path)
+
+    res_w = 1080
+    res_h = 1080
+    fps = 30
+
+    encoder_name, encoder_flags = get_encoder_for_quality(preview_quality)
+    emit_progress("ffmpeg_start", 75, f"Step 3: Rendering C19 Nokia {res_w}x{res_h} {fps}fps Video using {encoder_name} (Screen: {screen_color}, Sticker: {sticker or 'None'}, {duration:.1f}s)...")
+
+    bg_image = get_nokia_background(screen_color=screen_color, sticker=sticker)
+    normalized_ass = ass_path.replace("\\", "/")
+    if ":" in normalized_ass:
+        normalized_ass = normalized_ass.replace(":", "\\:")
+
+    fonts_dir = os.path.join(PROJECT_ROOT, "fonts").replace("\\", "/")
+    if ":" in fonts_dir:
+        fonts_dir = fonts_dir.replace(":", "\\:")
+
+    vf_filter = f"ass={normalized_ass}:fontsdir='{fonts_dir}'"
+
+    ffmpeg_cmd = [
+        "ffmpeg", "-y",
+        "-threads", "0",
+        "-loop", "1", "-framerate", str(fps),
+        "-i", bg_image,
+        "-i", audio_path,
+        "-vf", vf_filter,
+        "-c:v", encoder_name,
+    ] + encoder_flags + [
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        "-shortest",
+        output_path
+    ]
+
+    emit_progress("ffmpeg_rendering", 85, f"Step 3: Hardware encoding 1080x1080 C19 Nokia video with {encoder_name}...")
+    subprocess.run(ffmpeg_cmd, check=True)
+    emit_progress("ffmpeg_done", 95, f"Step 3: C19 Nokia video successfully rendered to '{output_path}'.")
+    return output_path
+
+
+def render_yt_hindi_video_ffmpeg(
+    audio_path: str,
+    ass_path: str,
+    output_path: str = "output_lyric_video.mp4",
+    duration: Optional[float] = None,
+    top_header: Optional[str] = None,
+    preview_quality: str = "final",
+    start_seconds: float = 0.0,
+    end_seconds: Optional[float] = None,
+    cues: Optional[List[Any]] = None,
+    film_burn_intro: bool = False,
+    film_burn_preroll_seconds: float = 0.0,
+    film_burn_intro_seconds: float = 0.0,
+    intro_header: Optional[str] = None,
+    song_title: str = "",
+    orig_first_cue_start: float = 0.0,
+    orig_second_cue_start: float = 0.0,
+    prepared_assets: Optional[Dict[str, Any]] = None,
+    tempo_transition_seconds: Optional[float] = None,
+    bg_folders: Optional[List[str]] = None,
+) -> str:
+    """
+    Renders complete YT Hindi Type video where:
+    1. Every lyric line has a distinct synced background video transition.
+    2. The lyric text is merged directly onto the video clip segment first.
+    3. Fade-in and fade-out are applied to the MERGED (video + text) segment simultaneously.
+    4. All merged segments are concatenated into a seamless video stream.
+    5. Top header is overlaid in the upper black margin.
+    """
+    if not duration or duration <= 0:
+        duration = get_audio_duration(audio_path)
+
+    is_fast = (preview_quality.lower() == "fast")
+    res_w = 540 if is_fast else 1080
+    res_h = 960 if is_fast else 1920
+    fps = 24 if is_fast else 30
+    # YT Hindi uses a square real-video window inside the portrait canvas.
+    # Final mode: 1080x1080; fast preview: 540x540.
+    rect_w = res_w
+    rect_h = res_w
+    top_margin = (res_h - rect_h) // 2
+
+    temp_dir = os.path.dirname(output_path) or "."
+    header_png = None
+    if not film_burn_intro:
+        # Standard YT Hindi Type has top header throughout
+        header_text = get_top_header_text(top_header, song_title=song_title, duration=duration or 0.0)
+        header_png = os.path.join(temp_dir, f"header_{int(time.time()*1000)}.png")
+        create_header_overlay_image(
+            header_text=header_text,
+            canvas_width=res_w,
+            canvas_height=res_h,
+            top_margin_height=top_margin,
+            output_png_path=header_png
+        )
+
+    intro_png = None
+    chosen_overlay_video = None
+    chosen_film_burn_sound = None
+    first_start = cues[0]["timeSeconds"] if cues and len(cues) > 0 and isinstance(cues[0], dict) else (cues[0][0] if cues and len(cues) > 0 else 0.0)
+    audio_delay = 0.0
+    burn_dur = 3.0
+    if film_burn_intro:
+        MIN_BURN_DUR = 3.0
+        MAX_BURN_DUR = 4.5
+
+        # The trim stage explicitly supplies the desired intro duration.
+        # When its audio pre-roll fully covers that duration, the song starts
+        # at t=0; otherwise retain a timing delay for lyric synchronization.
+        if film_burn_intro_seconds > 0.001:
+            burn_dur = min(MAX_BURN_DUR, max(MIN_BURN_DUR, film_burn_intro_seconds))
+            has_full_preroll = film_burn_preroll_seconds >= burn_dur - 0.01
+            audio_delay = 0.0 if has_full_preroll else max(0.0, burn_dur - first_start)
+        elif cues and len(cues) >= 2:
+            c0_s = float(cues[0]["timeSeconds"] if isinstance(cues[0], dict) else cues[0][0])
+            c1_s = float(cues[1]["timeSeconds"] if isinstance(cues[1], dict) else cues[1][0])
+            first_line_dur = c1_s - c0_s
+            c0_e = float(cues[0]["endSeconds"] if isinstance(cues[0], dict) else cues[0][1])
+            raw_dur = first_line_dur if first_line_dur > 0.001 else max(0.5, c0_e - c0_s)
+            burn_dur = min(MAX_BURN_DUR, max(MIN_BURN_DUR, raw_dur))
+            has_full_preroll = film_burn_preroll_seconds >= burn_dur - 0.01
+            audio_delay = 0.0 if has_full_preroll else max(0.0, burn_dur - first_start)
+        elif first_start < 2.5:
+            burn_dur = 3.5
+            audio_delay = 3.5 - first_start
+        else:
+            burn_dur = min(MAX_BURN_DUR, max(MIN_BURN_DUR, first_start))
+            audio_delay = 0.0
+
+        first_text = ""
+        if cues:
+            first_item = cues[0]
+            first_text = first_item.get("text", "") if isinstance(first_item, dict) else str(first_item[2])
+
+        c0_log = orig_first_cue_start if (orig_first_cue_start > 0.001 or orig_second_cue_start > 0.001) else (float(cues[0]["timeSeconds"]) if cues and isinstance(cues[0], dict) else (float(cues[0][0]) if cues else 0.0))
+        c1_log = orig_second_cue_start if (orig_first_cue_start > 0.001 or orig_second_cue_start > 0.001) else (float(cues[1]["timeSeconds"]) if cues and len(cues) > 1 and isinstance(cues[1], dict) else (float(cues[1][0]) if cues and len(cues) > 1 else 0.0))
+        opening_window_log = film_burn_intro_seconds if film_burn_intro_seconds > 0.001 else burn_dur
+
+        print(
+            f"[Film Burn Pre-Render Verification]\n"
+            f"  original first cue start:    {c0_log:.3f}s\n"
+            f"  original second cue start:   {c1_log:.3f}s\n"
+            f"  calculated opening window:   {opening_window_log:.3f}s\n"
+            f"  film_burn_intro_seconds:     {film_burn_intro_seconds:.3f}s\n"
+            f"  film_burn_preroll_seconds:   {film_burn_preroll_seconds:.3f}s\n"
+            f"  final burn_dur:              {burn_dur:.3f}s\n"
+            f"  audio delay:                 {audio_delay:.3f}s",
+            flush=True
+        )
+
+        emit_progress(
+            "film_burn_timeline",
+            73,
+            f"Film Burn: intro={burn_dur:.2f}s, pre-roll={film_burn_preroll_seconds:.2f}s, "
+            f"audio delay={audio_delay:.2f}s, first lyric='{first_text[:48]}'",
+        )
+
+        intro_text = get_intro_header_text(intro_header, song_title=song_title, duration=duration or 0.0)
+        intro_png = os.path.join(temp_dir, f"intro_{int(time.time()*1000)}.png")
+        create_intro_overlay_image(
+            intro_text=intro_text,
+            canvas_width=res_w,
+            canvas_height=res_h,
+            output_png_path=intro_png
+        )
+        prepared_assets = prepared_assets or {}
+        overlay_pool = prepared_assets.get("film_overlays") or get_all_film_overlays()
+        if overlay_pool:
+            chosen_overlay_video = normalize_video_asset(
+                random.choice(overlay_pool), res_w, res_h, fps
+            )
+            print(f"[YT Hindi Intro] Selected film overlay video: {os.path.basename(chosen_overlay_video)} (burn_dur={burn_dur:.2f}s, audio_delay={audio_delay:.2f}s)")
+        sound_pool = prepared_assets.get("film_burn_sounds") or get_all_film_burn_sound_effects()
+        if sound_pool:
+            chosen_film_burn_sound = normalize_audio_asset(random.choice(sound_pool))
+            print(f"[YT Hindi Intro] Selected sound effect: {os.path.basename(chosen_film_burn_sound)}")
+
+    encoder_name, encoder_flags = get_encoder_for_quality(preview_quality)
+
+    emit_progress("ffmpeg_start", 75, f"Step 3: Rendering YT Hindi Type {res_w}x{res_h} {fps}fps Video using {encoder_name} ({duration:.1f}s)...")
+
+    transition_seconds = (
+        tempo_transition_seconds
+        if tempo_transition_seconds is not None
+        else detect_tempo_transition_seconds(audio_path)
+    )
+    emit_progress(
+        "tempo_detected",
+        76,
+        f"Aubio tempo-adaptive transition: {transition_seconds:.2f}s",
+    )
+
+    # Build contiguous timeline segments synced to each lyric line:
+    # [(seg_start, seg_dur, lyric_text, fade_out_st, fade_out_d)]
+    #
+    # The segments are concatenated below, so their durations must add up to
+    # the output duration exactly.  Do not impose a per-line minimum here:
+    # closely spaced cues are valid and a minimum would make the video drift
+    # ahead of the audio.
+    timeline_segments: List[Tuple[float, float, str, float, float]] = []
+    if cues and len(cues) > 0:
+        if film_burn_intro:
+            intro_fade_st = max(0.0, burn_dur - transition_seconds)
+            timeline_segments.append((0.0, burn_dur, "", intro_fade_st, min(transition_seconds, burn_dur - intro_fade_st)))
+            effective_total_dur = duration + audio_delay
+
+            # In full-song film burn renders, the intro title card covers cue[0],
+            # so lyric display starts on cue[1]. When rendering a specific hook/test window,
+            # cue[0] is the start of the hook and must NOT be dropped.
+            visible_cues = cues if (start_seconds > 0.0 or film_burn_preroll_seconds > 0.001) else cues[1:]
+            for idx, item in enumerate(visible_cues):
+                source_start = float(item["timeSeconds"] if isinstance(item, dict) else item[0])
+                source_end = float(item["endSeconds"] if isinstance(item, dict) else item[1])
+                s_t = burn_dur if idx == 0 else source_start + audio_delay
+                e_t = source_end + audio_delay
+                txt = item.get("text", "") if isinstance(item, dict) else (item[2] if len(item) > 2 else "")
+                if idx + 1 < len(visible_cues):
+                    next_start = (visible_cues[idx + 1]["timeSeconds"] if isinstance(visible_cues[idx + 1], dict) else visible_cues[idx + 1][0]) + audio_delay
+                    seg_end = next_start
+                else:
+                    seg_end = effective_total_dur
+
+                s_t = max(0.0, min(effective_total_dur, float(s_t)))
+                seg_end = max(s_t, min(effective_total_dur, float(seg_end)))
+                seg_dur = seg_end - s_t
+                if seg_dur <= 0.001:
+                    continue
+
+                line_sing_dur = max(0.0, float(e_t) - float(s_t))
+                fade_out_st = min(seg_dur, line_sing_dur)
+                fade_out_d = min(transition_seconds, max(0.0, seg_dur - fade_out_st))
+                timeline_segments.append((s_t, seg_dur, txt, fade_out_st, fade_out_d))
+        else:
+            if first_start > 0.001:
+                intro_dur = min(duration, first_start)
+                intro_fade_st = max(0.0, intro_dur - transition_seconds)
+                timeline_segments.append((0.0, intro_dur, "", intro_fade_st, min(transition_seconds, intro_dur - intro_fade_st)))
+
+            for idx, item in enumerate(cues):
+                s_t = item["timeSeconds"] if isinstance(item, dict) else item[0]
+                e_t = item["endSeconds"] if isinstance(item, dict) else item[1]
+                txt = item.get("text", "") if isinstance(item, dict) else (item[2] if len(item) > 2 else "")
+                if idx + 1 < len(cues):
+                    next_start = cues[idx + 1]["timeSeconds"] if isinstance(cues[idx + 1], dict) else cues[idx + 1][0]
+                    seg_end = next_start
+                else:
+                    seg_end = duration
+
+                s_t = max(0.0, min(duration, float(s_t)))
+                seg_end = max(s_t, min(duration, float(seg_end)))
+                seg_dur = seg_end - s_t
+                if seg_dur <= 0.001:
+                    continue
+
+                line_sing_dur = max(0.0, float(e_t) - float(s_t))
+                fade_out_st = min(seg_dur, line_sing_dur)
+                fade_out_d = min(transition_seconds, max(0.0, seg_dur - fade_out_st))
+                timeline_segments.append((s_t, seg_dur, txt, fade_out_st, fade_out_d))
+    else:
+        num_seg = max(1, math.ceil(duration / 5.0))
+        seg_dur = duration / num_seg
+        timeline_segments = [
+            (i * seg_dur, seg_dur, "", max(0.0, seg_dur - transition_seconds), min(transition_seconds, seg_dur))
+            for i in range(num_seg)
+        ]
+
+    prepared_assets = prepared_assets or {}
+    all_bg_videos = prepared_assets.get("background_videos") or get_all_background_videos(folder_paths=bg_folders)
+    lyric_png_paths = []
+    if all_bg_videos and timeline_segments:
+        num_segments = len(timeline_segments)
+        # If film_burn_intro, segment 0 is a pure black plain with NO background video
+        clips_needed = (num_segments - 1) if (film_burn_intro and num_segments > 1) else num_segments
+        selected_clips = []
+        selected_clip_loops = []
+        clip_durations = dict(prepared_assets.get("background_durations") or {})
+        for path in all_bg_videos:
+            if path not in clip_durations or clip_durations[path] <= 0:
+                clip_durations[path] = get_video_duration(path)
+
+        last_clip = None
+        used_video_paths = set()
+        segment_video_assignments: Dict[int, List[Tuple[str, float]]] = {}
+        max_avail = max((clip_durations.get(p, 0.0) for p in all_bg_videos), default=0.0)
+
+        dur_values = [clip_durations[p] for p in all_bg_videos if clip_durations.get(p, 0.0) > 0.5]
+        if dur_values:
+            dur_values_sorted = sorted(dur_values)
+            p25_idx = max(0, len(dur_values_sorted) // 4)
+            target_max_cut = max(1.5, min(dur_values_sorted[p25_idx], 2.5))
+        else:
+            target_max_cut = 2.0
+
+        def plan_segment_cuts(dur: float, max_clip_dur: float) -> List[float]:
+            if dur <= max_clip_dur:
+                return [dur]
+            num_cuts = max(2, math.ceil(dur / max_clip_dur))
+            cut_dur = dur / num_cuts
+            cuts = [round(cut_dur, 3)] * (num_cuts - 1)
+            last_cut = round(dur - sum(cuts), 3)
+            cuts.append(last_cut)
+            return cuts
+
+        for index, (_, seg_dur, *_rest) in enumerate(timeline_segments):
+            if film_burn_intro and index == 0:
+                segment_video_assignments[index] = []
+                continue
+
+            cuts = plan_segment_cuts(seg_dur, target_max_cut)
+            assigned_cuts: List[Tuple[str, float]] = []
+
+            for cut_dur in cuts:
+                # Find unused background videos with duration >= cut_dur (strictly no repetitions)
+                available = [
+                    p for p in all_bg_videos
+                    if p not in used_video_paths and clip_durations.get(p, 0.0) >= cut_dur
+                ]
+                if not available:
+                    # If all available videos in library have already been used in this video,
+                    # cycle pool while avoiding immediate repeat
+                    used_video_paths.clear()
+                    available = [
+                        p for p in all_bg_videos
+                        if p != last_clip and clip_durations.get(p, 0.0) >= cut_dur
+                    ]
+                    if not available:
+                        available = [
+                            p for p in all_bg_videos
+                            if clip_durations.get(p, 0.0) >= cut_dur
+                        ]
+
+                if not available:
+                    raise RuntimeError(
+                        f"Cannot choose background video for segment cut duration {cut_dur:.2f}s: "
+                        f"the longest available background video is only {max_avail:.2f}s. "
+                        f"Please add longer background videos to your selected background folder."
+                    )
+
+                preferred = [p for p in available if p != last_clip]
+                chosen = random.choice(preferred if preferred else available)
+                used_video_paths.add(chosen)
+                selected_clips.append(chosen)
+                selected_clip_loops.append(False)
+                assigned_cuts.append((chosen, cut_dur))
+                last_clip = chosen
+
+            segment_video_assignments[index] = assigned_cuts
+
+        # Normalize independently selected clips concurrently. The final
+        # composition remains a single FFmpeg process; only preparation work
+        # is parallelized here.
+        if selected_clips:
+            with ThreadPoolExecutor(
+                max_workers=min(4, len(selected_clips)),
+                thread_name_prefix="bg-normalize",
+            ) as normalize_pool:
+                selected_clips = list(
+                    normalize_pool.map(
+                        lambda path: normalize_video_asset(path, res_w, res_h, fps),
+                        selected_clips,
+                    )
+                )
+
+        print(f"[YT Hindi] Merging {num_segments} segments ({len(selected_clips)} video clips, intro on black plain={film_burn_intro})")
+
+        # Generate lyric text PNG overlay for each segment (skip intro segment if film_burn_intro)
+        for i, (seg_start, seg_dur, seg_text, fade_out_st, fade_out_d) in enumerate(timeline_segments):
+            if film_burn_intro and i == 0:
+                continue
+            eff_text = seg_text
+            png_path = os.path.join(temp_dir, f"lyric_seg_{int(time.time()*1000)}_{i}.png")
+            create_lyric_line_overlay_image(
+                text=eff_text,
+                rect_w=rect_w,
+                rect_h=rect_h,
+                font_name="EB Garamond",
+                base_font_size=50,
+                output_png_path=png_path
+            )
+            lyric_png_paths.append(png_path)
+
+        video_inputs = []
+        for clip_path, should_loop in zip(selected_clips, selected_clip_loops):
+            if should_loop:
+                video_inputs.extend(["-stream_loop", "-1"])
+            video_inputs.extend(["-i", clip_path])
+
+        png_inputs = []
+        for p in lyric_png_paths:
+            png_inputs.extend(["-i", p])
+
+        filter_parts = []
+        video_clip_idx = 0
+        lyric_png_idx = 0
+        for i, (seg_start, seg_dur, seg_text, fade_out_st, fade_out_d) in enumerate(timeline_segments):
+            fade_in_d = min(transition_seconds, seg_dur / 2.0)
+            fade_filters = []
+            if fade_out_d > 0.001:
+                fade_filters.append(f"fade=t=out:st={fade_out_st:.3f}:d={fade_out_d:.3f}")
+
+            if film_burn_intro and i == 0:
+                # Segment 0 is 100% solid black plain. NO background video clip during intro.
+                fade_str = ("," + ",".join(fade_filters)) if fade_filters else ""
+                filter_parts.append(f"color=c=black:s={rect_w}x{rect_h}:r={fps}:d={seg_dur:.3f}{fade_str}[v0];")
+            else:
+                clips_info = segment_video_assignments.get(i, [])
+                p_in_idx = len(selected_clips) + lyric_png_idx
+                lyric_png_idx += 1
+
+                if len(clips_info) == 1:
+                    v_in_idx = video_clip_idx
+                    video_clip_idx += 1
+                    filter_parts.append(
+                        f"[{v_in_idx}:v]trim=0:{seg_dur:.3f},setpts=PTS-STARTPTS,"
+                        f"scale={rect_w}:{rect_h}:force_original_aspect_ratio=increase,"
+                        f"crop={rect_w}:{rect_h},setsar=1,fps={fps}[bg{i}];"
+                    )
+                else:
+                    sub_names = []
+                    for sub_j, (clip_path, c_dur) in enumerate(clips_info):
+                        v_in_idx = video_clip_idx
+                        video_clip_idx += 1
+                        filter_parts.append(
+                            f"[{v_in_idx}:v]trim=0:{c_dur:.3f},setpts=PTS-STARTPTS,"
+                            f"scale={rect_w}:{rect_h}:force_original_aspect_ratio=increase,"
+                            f"crop={rect_w}:{rect_h},setsar=1,fps={fps}[bg{i}_{sub_j}];"
+                        )
+                        sub_names.append(f"[bg{i}_{sub_j}]")
+                    filter_parts.append(
+                        f"{''.join(sub_names)}concat=n={len(clips_info)}:v=1:a=0[bg{i}];"
+                    )
+
+                # Merge lyric text directly onto the video clip first
+                filter_parts.append(
+                    f"[bg{i}][{p_in_idx}:v]overlay=0:0[merged{i}];"
+                )
+                # Apply fade in & fade out to the MERGED (video + text) segment
+                f_list = [f"fade=t=in:st=0:d={fade_in_d:.3f}"] + fade_filters
+                filter_parts.append(f"[merged{i}]" + ",".join(f_list) + f"[v{i}];")
+
+        # Concatenate all merged segments
+        concat_inputs = "".join(f"[v{i}]" for i in range(num_segments))
+        filter_parts.append(f"{concat_inputs}concat=n={num_segments}:v=1:a=0[bg_rect];")
+        filter_parts.append(f"[bg_rect]pad={res_w}:{res_h}:0:{top_margin}:color=black[canvas];")
+
+        if film_burn_intro and intro_png:
+            extra_inputs = []
+            if chosen_overlay_video:
+                ov_in_idx = len(selected_clips) + len(lyric_png_paths)
+                intro_idx = ov_in_idx + 1
+                audio_idx = ov_in_idx + 2
+                extra_inputs.extend(["-stream_loop", "-1", "-i", chosen_overlay_video, "-i", intro_png])
+
+                fade_out_burn = max(0.1, burn_dur - 0.42)
+                # Scale film overlay to canvas, trim to burn_dur, fade out at end of intro
+                filter_parts.append(
+                    f"[{ov_in_idx}:v]trim=0:{burn_dur:.3f},setpts=PTS-STARTPTS,"
+                    f"scale={res_w}:{res_h}:force_original_aspect_ratio=increase,"
+                    f"crop={res_w}:{res_h},setsar=1,fps={fps},"
+                    f"fade=t=out:st={fade_out_burn:.3f}:d=0.420[intro_film];"
+                )
+                filter_parts.append(
+                    f"[canvas][intro_film]overlay=0:0:enable='between(t,0,{burn_dur:.3f})'[with_film];"
+                )
+                base_layer = "[with_film]"
+            else:
+                intro_idx = len(selected_clips) + len(lyric_png_paths)
+                audio_idx = intro_idx + 1
+                extra_inputs.extend(["-i", intro_png])
+                base_layer = "[canvas]"
+
+            # Intro text with smooth fade in and fade out (loop static image continuously)
+            fade_in_d = min(0.5, burn_dur / 3.0)
+            fade_out_st = max(0.4, burn_dur - 0.6)
+            fade_out_d = min(0.5, burn_dur - fade_out_st)
+            filter_parts.append(
+                f"[{intro_idx}:v]format=rgba,loop=-1:1:0,fade=t=in:st=0.25:d={fade_in_d:.3f}:alpha=1,"
+                f"fade=t=out:st={fade_out_st:.3f}:d={fade_out_d:.3f}:alpha=1[intro_txt];"
+            )
+            # Overlay intro text strictly during intro window. No top header is added.
+            filter_parts.append(
+                f"{base_layer}[intro_txt]overlay=0:0:enable='between(t,0,{burn_dur:.3f})'[v_out];"
+            )
+
+            extra_image_inputs = extra_inputs
+        else:
+            hdr_idx = len(selected_clips) + len(lyric_png_paths)
+            audio_idx = hdr_idx + (1 if (header_png and os.path.exists(header_png)) else 0)
+            if header_png and os.path.exists(header_png):
+                filter_parts.append(f"[canvas][{hdr_idx}:v]overlay=0:0[v_out]")
+                extra_image_inputs = ["-i", header_png]
+            else:
+                filter_parts.append(f"[canvas]null[v_out]")
+                extra_image_inputs = []
+
+        # Film Burn audio is deliberately split at the intro boundary. The
+        # intro slice ramps from 20% to 100%; the remaining song is untouched
+        # at full volume. This prevents an expression from leaking past the
+        # intro or being masked by later audio processing.
+        extra_audio_inputs = []
+        if film_burn_intro and intro_png:
+            music_source = f"[{audio_idx}:a]"
+            if audio_delay > 0.001:
+                audio_delay_ms = int(round(audio_delay * 1000))
+                filter_parts.append(
+                    f"[{audio_idx}:a]adelay={audio_delay_ms}|{audio_delay_ms}[a_timed];"
+                )
+                music_source = "[a_timed]"
+            filter_parts.append(
+                f"{music_source}asplit=2[a_intro_source][a_main_source];"
+                f"[a_intro_source]atrim=0:{burn_dur:.3f},asetpts=PTS-STARTPTS,"
+                f"afade=t=in:st=0:d={burn_dur:.3f}:curve=tri:silence=0.2:unity=1[a_intro_music];"
+                f"[a_main_source]atrim=start={burn_dur:.3f},asetpts=PTS-STARTPTS[a_main_music];"
+                f"[a_intro_music][a_main_music]concat=n=2:v=0:a=1[a_music_fade];"
+            )
+            if chosen_film_burn_sound:
+                sfx_idx = audio_idx + 1
+                extra_audio_inputs = ["-i", chosen_film_burn_sound]
+                filter_parts.append(
+                    f"[{sfx_idx}:a]atrim=0:{burn_dur:.3f},asetpts=PTS-STARTPTS,"
+                    f"volume=0.35[sfx_intro];"
+                    f"[a_music_fade][sfx_intro]amix=inputs=2:duration=first:"
+                    f"dropout_transition=0:normalize=0[a_film_mix];"
+                )
+                audio_map_out = "[a_film_mix]"
+            else:
+                audio_map_out = "[a_music_fade]"
+        else:
+            audio_map_out = f"{audio_idx}:a"
+
+        # Handle any legacy synchronized audio delay if it is ever supplied.
+        final_render_duration = duration + audio_delay
+        if audio_delay > 0.001 and not (film_burn_intro and intro_png):
+            audio_delay_ms = int(round(audio_delay * 1000))
+            filter_parts.append(f";[{audio_idx}:a]adelay={audio_delay_ms}|{audio_delay_ms},apad[a_synced]")
+            audio_map_out = "[a_synced]"
+
+        filter_complex = "".join(filter_parts)
+        filter_script_path = os.path.join(temp_dir, f"filter_graph_{int(time.time()*1000)}.txt")
+        with open(filter_script_path, "w", encoding="utf-8") as f:
+            f.write(filter_complex)
+
+        ffmpeg_cmd = (
+            ["ffmpeg", "-y", "-threads", "0"] +
+            video_inputs +
+            png_inputs +
+            extra_image_inputs +
+            ["-i", audio_path] +
+            extra_audio_inputs +
+            ["-filter_complex_script", filter_script_path] +
+            ["-map", "[v_out]", "-map", audio_map_out] +
+            ["-t", f"{final_render_duration:.2f}", "-r", str(fps), "-c:v", encoder_name] +
+            encoder_flags +
+            ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output_path]
+        )
+
+    else:
+        print(f"[YT Hindi] Notice: No background videos found in videos/input/. Using black background.")
+        normalized_ass = (ass_path or "").replace("\\", "/")
+        if ":" in normalized_ass:
+            normalized_ass = normalized_ass.replace(":", "\\:")
+        fonts_dir = os.path.join(PROJECT_ROOT, "fonts").replace("\\", "/")
+        if ":" in fonts_dir:
+            fonts_dir = fonts_dir.replace(":", "\\:")
+        ass_filter = f"ass={normalized_ass}:fontsdir='{fonts_dir}'" if (ass_path and os.path.exists(ass_path)) else "null"
+
+        overlay_img = header_png if (header_png and os.path.exists(header_png)) else (intro_png if (intro_png and os.path.exists(intro_png)) else None)
+
+        if overlay_img:
+            filter_complex = f"[0:v][1:v]overlay=0:0[v_hdr];[v_hdr]{ass_filter}[v_out]"
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-threads", "0",
+                "-f", "lavfi", "-i", f"color=c=black:s={res_w}x{res_h}:r={fps}:d={duration:.2f}",
+                "-i", overlay_img,
+                "-i", audio_path,
+                "-filter_complex", filter_complex,
+                "-map", "[v_out]", "-map", "2:a",
+                "-t", f"{duration:.2f}",
+                "-r", str(fps),
+                "-c:v", encoder_name,
+            ] + encoder_flags + [
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                output_path
+            ]
+        else:
+            filter_complex = f"[0:v]{ass_filter}[v_out]"
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-threads", "0",
+                "-f", "lavfi", "-i", f"color=c=black:s={res_w}x{res_h}:r={fps}:d={duration:.2f}",
+                "-i", audio_path,
+                "-filter_complex", filter_complex,
+                "-map", "[v_out]", "-map", "1:a",
+                "-t", f"{duration:.2f}",
+                "-r", str(fps),
+                "-c:v", encoder_name,
+            ] + encoder_flags + [
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                output_path
+            ]
+
+    ffmpeg_cmd = [str(x) for x in ffmpeg_cmd if x is not None]
+    emit_progress("ffmpeg_rendering", 85, f"Hardware encoding {res_w}x{res_h} video with {encoder_name}...")
+    try:
+        subprocess.run(ffmpeg_cmd, check=True)
+    finally:
+        for p in lyric_png_paths:
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+        try:
+            if header_png and os.path.exists(header_png):
+                os.remove(header_png)
+        except Exception:
+            pass
+        try:
+            if intro_png and os.path.exists(intro_png):
+                os.remove(intro_png)
+        except Exception:
+            pass
+        try:
+            if 'filter_script_path' in locals() and filter_script_path and os.path.exists(filter_script_path):
+                os.remove(filter_script_path)
+        except Exception:
+            pass
+
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+        raise RuntimeError(f"Rendered video {output_path} is missing or empty.")
+
+    emit_progress("ffmpeg_done", 95, f"Video successfully rendered to '{output_path}'.")
+    return output_path
+
+
+def format_master_header_title(song_title: str) -> str:
+    """Format song title as "SONG NAME" LYRICS in uppercase, stripping unwanted video tags."""
+    clean = (song_title or "SONG").strip()
+    if "http" in clean.lower():
+        clean = "SONG"
+    clean = re.sub(r'[\(\[\{].*?[\)\]\}]', '', clean)
+    if " - " in clean:
+        parts = clean.split(" - ", 1)
+        clean = parts[1].strip()
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    if not clean:
+        clean = "SONG"
+    return f'"{clean.upper()}" LYRICS'
+
+
+def get_master_lyrics_background(variant: str = "default") -> Tuple[str, bool]:
+    """
+    Returns (path, is_video) for media in the selected Master Lyrics variant.
+    Supports images (.jpg, .jpeg, .png, .webp) and video files (.mp4, .mov, .mkv).
+    """
+    folder_name = "zmusic" if (variant or "").lower() == "zmusic" else "default"
+    base_dir = os.path.join(PROJECT_ROOT, "videos", "input", "Wholelyrics", folder_name)
+    if os.path.exists(base_dir):
+        files = [os.path.join(base_dir, f) for f in os.listdir(base_dir) if not f.startswith(".")]
+        v_exts = (".mp4", ".mov", ".mkv", ".webm")
+        img_exts = (".jpg", ".jpeg", ".png", ".webp")
+        images = [f for f in files if f.lower().endswith(img_exts)]
+        videos = [f for f in files if f.lower().endswith(v_exts)]
+        if images:
+            return random.choice(images), False
+        elif videos:
+            return random.choice(videos), True
+
+    return "", False
+
+
+# Backward-compatible alias for any external callers.
+get_english_generic_background = get_master_lyrics_background
+
+
+def render_master_lyric_video_ffmpeg(
+    audio_path: str,
+    output_path: str,
+    duration: float,
+    cues: List[Any],
+    song_title: Optional[str] = None,
+    preview_quality: str = "final",
+    start_seconds: float = 0.0,
+    end_seconds: Optional[float] = None,
+    variant: str = "default"
+) -> str:
+    """
+    Renders video adhering strictly to MASTER LYRIC TEMPLATE SPECIFICATION:
+    - Canvas: 9:16 Vertical (1080 x 1920 pixels), 24 fps
+    - Background: Media from videos/input/English generic/ (100% Opacity, NO dark overlay or tint)
+    - Header: None
+    - Lyrics: Bold Arial, black, left-aligned from the upper-left
+    - Segment: All supplied lyric lines remain visible together
+    - Line Spacing: 1.6x Line Height, Base font Arial Bold 44px
+    - Dynamic Line State Machine:
+      * Inactive State: black at reduced opacity
+      * Active State: solid black at full opacity, with no pill/background
+      * Post-Active Reset: Immediately returns to reduced-opacity black
+    """
+    res_w = 1080
+    res_h = 1920
+    fps = 24
+
+    is_fast = (preview_quality or "").lower() in ("fast", "draft", "preview")
+    encoder_name, encoder_flags = get_encoder_for_quality(preview_quality)
+
+    emit_progress("ffmpeg_start", 75, f"Step 3: Rendering Master Lyric {res_w}x{res_h} {fps}fps Video using {encoder_name} ({duration:.1f}s)...")
+
+    # Master Lyrics uses bold Arial for every lyric state and has no header.
+    is_zmusic = (variant or "").lower() == "zmusic"
+    if is_zmusic:
+        l_font_path = "fonts/Roboto-Bold.ttf" if os.path.exists("fonts/Roboto-Bold.ttf") else (
+            "C:/Windows/Fonts/Roboto-Bold.ttf" if os.path.exists("C:/Windows/Fonts/Roboto-Bold.ttf") else "C:/Windows/Fonts/arialbd.ttf"
+        )
+        lyrics_font_normal = ImageFont.truetype(l_font_path, 56)
+        lyrics_font_active = ImageFont.truetype(l_font_path, 56)
+    else:
+        l_font_path = "C:/Windows/Fonts/arialbd.ttf" if os.path.exists("C:/Windows/Fonts/arialbd.ttf") else "C:/Windows/Fonts/calibrib.ttf"
+        lyrics_font_normal = ImageFont.truetype(l_font_path, 44)
+        lyrics_font_active = ImageFont.truetype(l_font_path, 44)
+
+    # Parse cues into structured list [(start_t, end_t, text)]
+    parsed_cues = []
+    for item in (cues or []):
+        if isinstance(item, dict):
+            st = float(item.get("timeSeconds", 0.0))
+            et = float(item.get("endSeconds", st + 3.0))
+            txt = item.get("text", "").strip()
+        elif isinstance(item, (list, tuple)):
+            st = float(item[0])
+            et = float(item[1])
+            txt = str(item[2]).strip() if len(item) > 2 else ""
+        else:
+            continue
+        if txt and et > st:
+            parsed_cues.append((st, et, txt))
+
+    parsed_cues.sort(key=lambda x: x[0])
+
+    # Build sequence of discrete state intervals across [0, duration]
+    time_boundaries = {0.0, float(duration)}
+    for st, et, _ in parsed_cues:
+        if 0.0 <= st <= duration:
+            time_boundaries.add(round(st, 3))
+        if 0.0 <= et <= duration:
+            time_boundaries.add(round(et, 3))
+    sorted_times = sorted(time_boundaries)
+
+    intervals = []
+    for i in range(len(sorted_times) - 1):
+        t_start = sorted_times[i]
+        t_end = sorted_times[i + 1]
+        seg_d = t_end - t_start
+        if seg_d <= 0.01:
+            continue
+        t_mid = (t_start + t_end) / 2.0
+
+        # Find active line if any
+        active_idx = -1
+        for c_idx, (st, et, _) in enumerate(parsed_cues):
+            if st <= t_mid <= et:
+                active_idx = c_idx
+                break
+
+        intervals.append((t_start, t_end, seg_d, active_idx))
+
+    output_dir = os.path.dirname(output_path) or "."
+    # Remove abandoned state folders from interrupted previous Master runs.
+    # The prefix is intentionally narrow so final videos and other temp files
+    # are never touched.
+    for stale_dir in glob.glob(os.path.join(output_dir, "temp_master_*")):
+        if os.path.isdir(stale_dir):
+            shutil.rmtree(stale_dir, ignore_errors=True)
+
+    temp_dir = os.path.join(output_dir, f"temp_master_{int(time.time()*1000)}")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    def wrap_words(txt: str, fnt: ImageFont.ImageFont, max_w: int = 920) -> List[str]:
+        words = txt.split()
+        if not words:
+            return []
+        lines_out = []
+        cur_words = []
+        for w in words:
+            cand = " ".join(cur_words + [w])
+            bbox = fnt.getbbox(cand)
+            if (bbox[2] - bbox[0]) <= max_w:
+                cur_words.append(w)
+            else:
+                if cur_words:
+                    lines_out.append(" ".join(cur_words))
+                    cur_words = [w]
+                else:
+                    lines_out.append(w)
+                    cur_words = []
+        if cur_words:
+            lines_out.append(" ".join(cur_words))
+        return lines_out
+
+    # Render unique state PNGs
+    state_to_filename = {}
+    concat_entries = []
+    line_h = int(round((56 if is_zmusic else 44) * 1.6))
+    max_lyric_height = int(res_h * 0.65)
+
+    # Split long requested segments into readable mini-sections. A section
+    # never occupies more than 65% of the canvas height.
+    lyric_pages = []
+    current_page = []
+    current_height = 0
+    for cue_index, (_, _, lyric_text) in enumerate(parsed_cues):
+        lyric_font = lyrics_font_normal
+        wrapped_lines = wrap_words(lyric_text, lyric_font, max_w=840) or [lyric_text]
+        cue_height = len(wrapped_lines) * line_h
+        if current_page and current_height + cue_height > max_lyric_height:
+            lyric_pages.append(current_page)
+            current_page = []
+            current_height = 0
+        current_page.append(cue_index)
+        current_height += cue_height
+    if current_page:
+        lyric_pages.append(current_page)
+
+    try:
+        for t_start, t_end, seg_d, active_idx in intervals:
+            # Keep the complete current mini-section on screen. Sections are
+            # selected by the active lyric and advance without scrolling.
+            page_index = 0
+            if active_idx >= 0:
+                for idx, page in enumerate(lyric_pages):
+                    if active_idx in page:
+                        page_index = idx
+                        break
+            elif lyric_pages:
+                next_index = next(
+                    (cue_index for cue_index, (cue_start, _, _) in enumerate(parsed_cues) if cue_start >= t_start),
+                    lyric_pages[0][0],
+                )
+                for idx, page in enumerate(lyric_pages):
+                    if next_index in page:
+                        page_index = idx
+                        break
+            visible_slice = lyric_pages[page_index] if lyric_pages else []
+
+            state_key = (active_idx, tuple(visible_slice))
+            if state_key not in state_to_filename:
+                img = Image.new("RGBA", (res_w, res_h), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(img)
+
+                # Compute heights of every line in the requested segment.
+                block_lines = []
+                total_content_height = 0
+                for v_idx in visible_slice:
+                    l_text = parsed_cues[v_idx][2]
+                    is_active = (v_idx == active_idx)
+                    cur_font = lyrics_font_active if is_active else lyrics_font_normal
+                    wrapped = wrap_words(l_text, cur_font, max_w=840) or [l_text]
+                    l_block_height = len(wrapped) * line_h
+                    block_lines.append((v_idx, is_active, wrapped, cur_font, l_block_height))
+                    total_content_height += l_block_height
+
+                # Position the complete segment from the upper-left.
+                cur_y = 140
+
+                for v_idx, is_active, wrapped, cur_font, l_block_height in block_lines:
+                    for sub_idx, sub_text in enumerate(wrapped):
+                        sbbox = draw.textbbox((0, 0), sub_text, font=cur_font)
+                        sw, sh = sbbox[2] - sbbox[0], sbbox[3] - sbbox[1]
+                        line_center_y = cur_y + (sub_idx * line_h) + (line_h // 2)
+                        sx = 120
+                        sy = line_center_y - (sh / 2)
+
+                        # Navigation is conveyed by opacity only: the active
+                        # line is solid black, while all other lines remain
+                        # black at reduced opacity. No pill or background shape.
+                        if is_zmusic:
+                            text_fill = (255, 255, 255, 255) if is_active else (0, 0, 0, 255)
+                            if is_active:
+                                draw.text((sx + 3, sy + 3), sub_text, font=cur_font, fill=(0, 0, 0, 150))
+                        else:
+                            text_fill = (0, 0, 0, 255 if is_active else 105)
+                        draw.text((sx, sy), sub_text, font=cur_font, fill=text_fill)
+
+                    cur_y += l_block_height
+
+                fn = f"state_{len(state_to_filename)}.png"
+                img.save(os.path.join(temp_dir, fn))
+                state_to_filename[state_key] = fn
+
+            concat_entries.append((state_to_filename[state_key], seg_d))
+
+        concat_file_path = os.path.join(temp_dir, "states_concat.txt")
+        with open(concat_file_path, "w", encoding="utf-8") as cf:
+            for fn, seg_d in concat_entries:
+                cf.write(f"file '{fn}'\nduration {seg_d:.3f}\n")
+            if concat_entries:
+                # FFmpeg concat demuxer requires repeating the last file without duration
+                cf.write(f"file '{concat_entries[-1][0]}'\n")
+
+        # Discover background media from videos/input/English generic/
+        bg_media_path, is_bg_video = get_master_lyrics_background(variant)
+        print(f"[Master Lyric] Background source: '{bg_media_path}' (is_video={is_bg_video})")
+
+        inputs = []
+        if bg_media_path and os.path.exists(bg_media_path):
+            if is_bg_video:
+                inputs.extend(["-stream_loop", "-1", "-i", bg_media_path])
+            else:
+                inputs.extend(["-loop", "1", "-i", bg_media_path])
+        else:
+            # Fallback to white/clean canvas if folder is empty
+            inputs.extend(["-f", "lavfi", "-i", f"color=c=white:s={res_w}x{res_h}:r={fps}:d={duration:.2f}"])
+
+        inputs.extend(["-f", "concat", "-safe", "0", "-i", concat_file_path])
+        inputs.extend(["-i", audio_path])
+
+        filter_complex = (
+            f"[0:v]scale={res_w}:{res_h}:force_original_aspect_ratio=increase,"
+            f"crop={res_w}:{res_h},setsar=1,fps={fps}[bg];"
+            f"[bg][1:v]overlay=0:0[v_out]"
+        )
+
+        ffmpeg_cmd = (
+            ["ffmpeg", "-y", "-threads", "0"] +
+            inputs +
+            ["-filter_complex", filter_complex] +
+            ["-map", "[v_out]", "-map", "2:a"] +
+            ["-t", f"{duration:.2f}", "-r", str(fps), "-c:v", encoder_name] +
+            encoder_flags +
+            ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output_path]
+        )
+
+        emit_progress("ffmpeg_rendering", 85, f"Hardware encoding Master Lyric {res_w}x{res_h} video with {encoder_name}...")
+        subprocess.run(ffmpeg_cmd, check=True)
+
+    finally:
+        try:
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1000:
+        raise RuntimeError(f"Rendered video {output_path} is missing or empty.")
+
+    emit_progress("ffmpeg_done", 95, f"Master Lyric Video successfully rendered to '{output_path}'.")
+    return output_path
+
+
+def generate_lyric_video(
+    song_query: str,
+    output_path: str = "output_lyric_video.mp4",
+    temp_audio_path: str = "temp_audio.mp3",
+    temp_ass_path: str = "lyrics.ass",
+    offset_seconds: float = 0.0,
+    aspect_ratio: str = "portrait",
+    font_name: str = "Impact",
+    font_size: Optional[int] = None,
+    lang: str = "auto",
+    template: str = "template1",
+    placement: str = "center",
+    y_percent: Optional[float] = 50.0,
+    x_percent: Optional[float] = 50.0,
+    brat_theme: str = "green",
+    brat_bold: bool = False,
+    brat_casing: str = "upper",
+    blur_amount: Optional[float] = None,
+    spacing: Optional[int] = None,
+    word_spacing: Optional[int] = None,
+    start_seconds: float = 0.0,
+    end_seconds: Optional[float] = None,
+    clean_base: bool = False,
+    audio_file: Optional[str] = None,
+    cues_file: Optional[str] = None,
+    top_header: Optional[str] = None,
+    preview_quality: str = "final",
+    intro_header: Optional[str] = None,
+    master_variant: str = "default",
+    yt_hindi_variant: str = "standard",
+    nokia_screen_color: str = "#b40000",
+    nokia_sticker: Optional[str] = None,
+    bg_folders: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Main generator pipeline supporting Templates (1, 2, 3, 4 Brat, YT Hindi Type, C19 Nokia), Fonts, Languages, and Interactive Placement."""
+    generation_started_at = time.perf_counter()
+    generation_cpu_started_at = time.process_time()
+    tpl_id = (template or "").lower().strip()
+    is_yt_hindi = tpl_id in ("yt_hindi_type", "yt_hindi_intro")
+    is_nokia = tpl_id in ("c19_nokia", "c19 nokia", "nokia")
+    if tpl_id in ["template4", "brat", "template_brat", "template4_brat", "template_4_brat"]:
+        tpl = TEMPLATES["template4_brat"]
+        is_brat = True
+        b_theme = BRAT_THEMES.get((brat_theme or "green").lower(), BRAT_THEMES["green"])
+        bg_color = b_theme["bg_color"]
+    elif is_yt_hindi:
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["yt_hindi_type"])
+        is_brat = False
+        bg_color = "black"
+    elif tpl_id == "master_lyrics":
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["master_lyrics"])
+        is_brat = False
+        bg_color = "photo"
+    elif is_nokia:
+        tpl = TEMPLATES.get("c19_nokia", TEMPLATES["c19_nokia"])
+        is_brat = False
+        bg_color = nokia_screen_color or "#b40000"
+    else:
+        tpl = TEMPLATES.get(tpl_id, TEMPLATES["template1"])
+        is_brat = False
+        bg_color = tpl.get("bg_color", "black")
+
+    effective_aspect = aspect_ratio or tpl["aspect_ratio"]
+    effective_font = font_name if font_name and font_name != "Impact" else tpl["font_name"]
+    trimmed_audio = None
+    is_film_burn_render = is_yt_hindi and (
+        tpl_id == "yt_hindi_intro" or yt_hindi_variant == "film_burn"
+    )
+
+    emit_progress("init", 5, f"Initiating Generator with {tpl['name']} ({placement}, Lang: {lang})...")
+
+    # Asset discovery/probing is independent of audio and lyrics. Start it
+    # before the network-bound audio/lyrics operation so both pipelines make
+    # progress at the same time. The returned metadata is consumed only after
+    # the lyric timeline is known.
+    preparation_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="lyric-prep")
+    background_future = preparation_pool.submit(
+        prepare_background_assets,
+        is_yt_hindi=is_yt_hindi,
+        film_burn_intro=is_film_burn_render,
+        bg_folders=bg_folders,
+    )
+    tempo_future = None
+    try:
+        if audio_file and os.path.exists(audio_file):
+            audio_path = audio_file
+            duration = get_audio_duration(audio_path)
+            cues = []
+            if cues_file and os.path.exists(cues_file):
+                try:
+                    with open(cues_file, "r", encoding="utf-8") as cf:
+                        loaded = json.load(cf)
+                        if isinstance(loaded, list):
+                            for item in loaded:
+                                if isinstance(item, dict) and "text" in item:
+                                    s_t = float(item.get("timeSeconds", 0.0))
+                                    e_t = float(item.get("endSeconds", s_t + 2.5))
+                                    cues.append((s_t, e_t, str(item["text"])))
+                                elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                                    cues.append((float(item[0]), float(item[1]), str(item[2])))
+                except Exception as e:
+                    print(f"[WARN] Error reading cues file: {e}", file=sys.stderr)
+            yt_data = {
+                "audio_path": audio_path,
+                "duration": duration,
+                "cues": cues,
+                "title": song_query,
+                "uploader": "YouTube Video"
+            }
+        else:
+            audio_future = preparation_pool.submit(
+                download_youtube_audio,
+                query_or_url=song_query,
+                output_audio_path=temp_audio_path,
+                target_lang=lang,
+            )
+            yt_data = audio_future.result()
+            audio_path = yt_data["audio_path"]
+            if is_yt_hindi:
+                # The downloaded/converted audio is the timing authority for
+                # this template. YouTube metadata can differ by padding or
+                # encoder delay and cause the lyric timeline to drift.
+                duration = get_audio_duration(audio_path) or yt_data["duration"]
+            else:
+                duration = yt_data["duration"]
+
+        # Aubio needs the completed audio file, but is independent of asset
+        # probing and the later timeline calculations.
+        if is_yt_hindi and audio_path:
+            tempo_future = preparation_pool.submit(
+                detect_tempo_transition_seconds,
+                audio_path,
+            )
+
+        prepared_assets = background_future.result()
+        tempo_transition_seconds = tempo_future.result() if tempo_future else None
+    finally:
+        # No preparation task is allowed to outlive this orchestration phase;
+        # all renderer inputs are fully materialized before rendering starts.
+        preparation_pool.shutdown(wait=True)
+
+    # If no usable lyrics found across all providers, stop before FFmpeg rendering
+    if not yt_data.get("cues"):
+        msg = "No usable lyrics found. Video generation stopped before FFmpeg rendering."
+        emit_progress("no_lyrics_error", 100, msg)
+        print(f"[Error] {msg}", file=sys.stderr)
+        final_result = {
+            "status": "error",
+            "error": msg,
+            "message": msg,
+            "totalLines": 0,
+            "syncedLines": []
+        }
+        return final_result
+
+    # Restrict render to requested start_seconds and end_seconds window
+    requested_start = max(0.0, float(start_seconds or 0.0))
+    requested_end = float(end_seconds) if end_seconds is not None else None
+    test_start = requested_start
+    test_end = min(duration, requested_end if requested_end is not None else duration)
+    film_burn_preroll_seconds = 0.0
+    film_burn_intro_seconds = 0.0
+    orig_first_cue_start = 0.0
+    orig_second_cue_start = 0.0
+    calculated_opening_window = 0.0
+
+    def _extract_cue_timing(c):
+        if isinstance(c, dict):
+            s = float(c.get("timeSeconds", 0.0))
+            e = float(c.get("endSeconds", s + 2.5))
+            txt = str(c.get("text", ""))
+        elif isinstance(c, (list, tuple)) and len(c) >= 3:
+            s = float(c[0])
+            e = float(c[1])
+            txt = str(c[2])
+        elif isinstance(c, (list, tuple)) and len(c) == 2:
+            s = float(c[0])
+            e = float(c[1])
+            txt = ""
+        else:
+            s = 0.0
+            e = 2.5
+            txt = ""
+        return s, e, txt
+
+    raw_cues = yt_data.get("cues", [])
+    if test_start > 0.0 or requested_end is not None:
+        selected_cues = [
+            c for c in raw_cues
+            if _extract_cue_timing(c)[1] > test_start and _extract_cue_timing(c)[0] < test_end
+        ]
+    else:
+        selected_cues = list(raw_cues)
+    if not selected_cues and raw_cues:
+        selected_cues = list(raw_cues)
+
+    if is_film_burn_render:
+        MIN_BURN_DUR = 3.0
+        MAX_BURN_DUR = 4.5
+
+        if len(selected_cues) >= 2:
+            first_cue = selected_cues[0]
+            second_cue = selected_cues[1]
+            orig_first_cue_start = _extract_cue_timing(first_cue)[0]
+            orig_second_cue_start = _extract_cue_timing(second_cue)[0]
+            calculated_opening_window = max(0.0, orig_second_cue_start - orig_first_cue_start)
+            if calculated_opening_window >= 1.0:
+                film_burn_intro_seconds = min(MAX_BURN_DUR, max(MIN_BURN_DUR, calculated_opening_window))
+            else:
+                film_burn_intro_seconds = 3.0
+        else:
+            film_burn_intro_seconds = 3.0
+
+        film_burn_preroll_seconds = min(film_burn_intro_seconds, test_start)
+
+        print(
+            f"[film-burn-intro] Timing Diagnostics:\n"
+            f"  original first cue start:    {orig_first_cue_start:.3f}s\n"
+            f"  original second cue start:   {orig_second_cue_start:.3f}s\n"
+            f"  calculated opening window:   {calculated_opening_window:.3f}s\n"
+            f"  film_burn_intro_seconds:     {film_burn_intro_seconds:.3f}s\n"
+            f"  film_burn_preroll_seconds:   {film_burn_preroll_seconds:.3f}s",
+            flush=True
+        )
+
+    if test_start > 0.0 or requested_end is not None:
+        if test_end <= test_start:
+            test_end = duration
+        trim_dur = max(0.5, test_end - test_start)
+        audio_preroll = min(film_burn_intro_seconds, test_start) if is_film_burn_render else 0.0
+        film_burn_preroll_seconds = audio_preroll
+        audio_trim_start = max(0.0, test_start - audio_preroll)
+        audio_trim_duration = trim_dur + audio_preroll
+        audio_ext = Path(audio_path).suffix or ".m4a"
+        audio_stem = Path(audio_path).stem
+        trimmed_audio = str(Path(audio_path).with_name(f"{audio_stem}_trimmed_{test_start:.2f}_{test_end:.2f}_{int(time.time()*1000)}{audio_ext}"))
+        audio_codec = ["-c:a", "aac", "-b:a", "192k"] if audio_ext.lower() in (".m4a", ".mp4", ".aac") else ["-c:a", "libmp3lame", "-b:a", "192k"]
+        trim_result = subprocess.run([
+            "ffmpeg", "-y",
+            "-i", audio_path,
+            "-ss", f"{audio_trim_start:.3f}",
+            "-t", f"{audio_trim_duration:.3f}",
+        ] + audio_codec + [trimmed_audio], capture_output=True, text=True)
+        if trim_result.returncode != 0 or not os.path.exists(trimmed_audio):
+            detail = (trim_result.stderr or "FFmpeg did not create the trimmed audio file.").strip()
+            raise RuntimeError(f"Could not prepare the requested audio segment: {detail[-600:]}")
+        audio_path = trimmed_audio
+        
+        # Shift and filter cues accurately aligned with the trimmed audio window
+        original_cues = yt_data["cues"]
+        filtered_cues = [
+            (
+                max(0.0, _extract_cue_timing(c)[0] - test_start + audio_preroll),
+                min(trim_dur + audio_preroll, _extract_cue_timing(c)[1] - test_start + audio_preroll),
+                _extract_cue_timing(c)[2],
+            )
+            for c in original_cues
+            if _extract_cue_timing(c)[1] > test_start and _extract_cue_timing(c)[0] < (test_end - 0.1)
+        ]
+        if not filtered_cues and original_cues:
+            filtered_cues = [
+                (
+                    max(0.0, _extract_cue_timing(c)[0] - test_start + audio_preroll),
+                    min(trim_dur + audio_preroll, _extract_cue_timing(c)[1] - test_start + audio_preroll),
+                    _extract_cue_timing(c)[2],
+                )
+                for c in original_cues
+                if _extract_cue_timing(c)[1] > test_start and _extract_cue_timing(c)[0] < test_end
+            ]
+        yt_data["cues"] = filtered_cues
+        duration = trim_dur + audio_preroll
+        emit_progress(
+            "test_range",
+            55,
+            f"Rendering test window: {test_start:.1f}s to {test_end:.1f}s "
+            f"with {audio_preroll:.1f}s Film Burn audio pre-roll ({duration:.1f}s total)...",
+        )
+
+    ass_path, structured_lines, raw_lrc = build_ass_and_lrc_content(
+        cues=yt_data["cues"],
+        output_ass_path=temp_ass_path,
+        offset_seconds=offset_seconds,
+        audio_duration=duration,
+        aspect_ratio=effective_aspect,
+        font_name=effective_font,
+        font_size=font_size,
+        template_key=template,
+        placement=placement,
+        y_percent=y_percent,
+        x_percent=x_percent,
+        brat_theme=brat_theme,
+        brat_bold=brat_bold,
+        brat_casing=brat_casing,
+        blur_amount=blur_amount,
+        spacing=spacing,
+        word_spacing=word_spacing
+    )
+    render_started_at = time.perf_counter()
+
+    if is_yt_hindi:
+        is_spotify_input = "spotify.com/track/" in song_query or song_query.startswith("spotify:track:")
+        intro_song_title = (
+            yt_data.get("spotify_title")
+            if is_spotify_input
+            else (yt_data.get("title") or song_query)
+        )
+        render_yt_hindi_video_ffmpeg(
+            audio_path=audio_path,
+            ass_path=ass_path,
+            output_path=output_path,
+            duration=duration,
+            top_header=top_header,
+            preview_quality=preview_quality,
+            start_seconds=test_start,
+            end_seconds=test_end,
+            cues=structured_lines,
+            film_burn_intro=(tpl_id == "yt_hindi_intro" or (tpl_id == "yt_hindi_type" and yt_hindi_variant == "film_burn")),
+            film_burn_preroll_seconds=film_burn_preroll_seconds,
+            film_burn_intro_seconds=film_burn_intro_seconds,
+            intro_header=intro_header,
+            song_title=intro_song_title or "This Song",
+            orig_first_cue_start=orig_first_cue_start,
+            orig_second_cue_start=orig_second_cue_start,
+            prepared_assets=prepared_assets,
+            tempo_transition_seconds=tempo_transition_seconds,
+            bg_folders=bg_folders,
+        )
+
+    elif tpl_id == "master_lyrics":
+        render_master_lyric_video_ffmpeg(
+            audio_path=audio_path,
+            output_path=output_path,
+            duration=duration,
+            cues=structured_lines,
+            song_title=yt_data.get("title") or song_query,
+            preview_quality=preview_quality,
+            start_seconds=test_start,
+            end_seconds=test_end,
+            variant=master_variant
+        )
+
+    elif is_nokia:
+        render_nokia_video_ffmpeg(
+            audio_path=audio_path,
+            ass_path=ass_path,
+            output_path=output_path,
+            duration=duration,
+            screen_color=nokia_screen_color or "#b40000",
+            sticker=nokia_sticker,
+            preview_quality=preview_quality
+        )
+
+    elif clean_base:
+        render_lyric_video_ffmpeg(
+            audio_path=audio_path,
+            ass_path=ass_path,
+            output_path=output_path,
+            duration=duration,
+            aspect_ratio=effective_aspect,
+            bg_color=bg_color,
+            is_brat=is_brat,
+            blur_amount=blur_amount,
+            clean_base=True,
+            preview_quality=preview_quality
+        )
+    else:
+        try:
+            render_exact_pillow_overlay_video(
+                cues=yt_data["cues"],
+                audio_path=audio_path,
+                output_path=output_path,
+                duration=duration,
+                aspect_ratio=effective_aspect,
+                font_name=effective_font,
+                font_size=font_size,
+                template_key=template,
+                placement=placement,
+                y_percent=y_percent,
+                x_percent=x_percent,
+                brat_theme=brat_theme,
+                brat_bold=brat_bold,
+                brat_casing=brat_casing,
+                blur_amount=blur_amount or 1.5,
+                spacing=spacing,
+                word_spacing=word_spacing,
+                offset_seconds=offset_seconds,
+                preview_quality=preview_quality
+            )
+        except Exception as err:
+            print(f"[WARN] Pillow overlay note: {err}. Falling back to ASS render.", file=sys.stderr)
+            render_lyric_video_ffmpeg(
+                audio_path=audio_path,
+                ass_path=ass_path,
+                output_path=output_path,
+                duration=duration,
+                aspect_ratio=effective_aspect,
+                bg_color=bg_color,
+                is_brat=is_brat,
+                blur_amount=blur_amount,
+                clean_base=False,
+                preview_quality=preview_quality
+            )
+
+    final_result = {
+        "status": "success",
+        "query": song_query,
+        "output_path": output_path,
+        "audio_path": audio_path,
+        "ass_path": ass_path,
+        "track_name": yt_data.get("title"),
+        "artist_name": yt_data.get("uploader"),
+        "duration": duration,
+        "aspect_ratio": effective_aspect,
+        "font_name": effective_font,
+        "template": template,
+        "brat_theme": brat_theme if is_brat else None,
+        "bg_color": bg_color,
+        "placement": placement,
+        "y_percent": y_percent,
+        "x_percent": x_percent,
+        "blur_amount": blur_amount,
+        "spacing": spacing,
+        "word_spacing": word_spacing,
+        "clean_base": clean_base,
+        "language": yt_data.get("matched_lang", lang),
+        "totalLines": len(structured_lines),
+        "syncedLines": structured_lines,
+        "rawLrc": raw_lrc
+    }
+
+    is_portrait_output = effective_aspect.lower() == "portrait" or effective_aspect == "9:16"
+    is_fast_preview = (preview_quality or "").lower() in ("fast", "draft", "preview")
+    # Only YT Hindi currently changes its canvas size for a fast preview.
+    # Other templates retain their production canvas and only change encoder
+    # settings, so the reported resolution remains truthful.
+    if is_yt_hindi and is_fast_preview:
+        output_resolution = "540x960"
+    else:
+        output_resolution = "1080x1920" if is_portrait_output else "1920x1080"
+    final_result["metrics"] = build_generation_metrics(
+        started_at=generation_started_at,
+        cpu_started_at=generation_cpu_started_at,
+        render_started_at=render_started_at,
+        output_path=output_path,
+        video_duration=duration,
+        encoder_name=(_CACHED_ENCODER[0] if _CACHED_ENCODER else "unknown"),
+        resolution=output_resolution,
+        fps=24 if (preview_quality or "").lower() in ("fast", "draft", "preview") else 30,
+    )
+
+    # Automatically clean up temporary trimmed audio files
+    if trimmed_audio and os.path.exists(trimmed_audio):
+        try:
+            os.remove(trimmed_audio)
+        except Exception:
+            pass
+
+    emit_progress("completed", 100, f"🎉 1080p MP4 ready using {tpl['name']} ({placement.upper()})!", final_result)
+    return final_result
+
+
+if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    query = args[0] if len(args) > 0 else "Rick Astley - Never Gonna Give You Up"
+    out = args[1] if len(args) > 1 else "output_lyric_video.mp4"
+    
+    offset = 0.0
+    aspect = None
+    font = None
+    size = None
+    lang = "auto"
+    template = "template1"
+    placement = "center"
+    ypos = 50.0
+    xpos = 50.0
+    blur = 3.6
+    spacing = None
+    word_spacing = None
+    brat_theme = "green"
+    brat_bold = False
+    brat_casing = "upper"
+    nokia_screen_color = "#b40000"
+    nokia_sticker = None
+    start_seconds = 0.0
+    end_seconds = None
+    clean_base = False
+    audio_file = None
+    cues_file = None
+    top_header = None
+    intro_header = None
+    preview_quality = "final"
+    master_variant = "default"
+    yt_hindi_variant = "standard"
+    bg_folders = None
+
+    for a in sys.argv[1:]:
+        if a.startswith("--offset="):
+            try:
+                offset = float(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--aspect="):
+            aspect = a.split("=")[1].strip()
+        elif a.startswith("--font="):
+            font = a.split("=")[1].strip()
+        elif a.startswith("--fontsize="):
+            try:
+                size = int(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--lang="):
+            lang = a.split("=")[1].strip()
+        elif a.startswith("--template="):
+            template = a.split("=")[1].strip()
+        elif a.startswith("--placement="):
+            placement = a.split("=")[1].strip()
+        elif a.startswith("--ypos="):
+            try:
+                ypos = float(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--xpos="):
+            try:
+                xpos = float(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--blur="):
+            try:
+                blur = float(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--spacing="):
+            try:
+                spacing = int(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--word-spacing="):
+            try:
+                word_spacing = int(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--brat-theme="):
+            brat_theme = a.split("=")[1].strip()
+        elif a.startswith("--brat-casing="):
+            brat_casing = a.split("=")[1].strip().lower()
+        elif a == "--brat-bold" or a.startswith("--brat-bold"):
+            brat_bold = True
+        elif a.startswith("--start-seconds=") or a.startswith("--start="):
+            try:
+                start_seconds = float(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a.startswith("--end-seconds=") or a.startswith("--end="):
+            try:
+                end_seconds = float(a.split("=")[1])
+            except ValueError:
+                pass
+        elif a == "--clean-base" or a.startswith("--clean-base"):
+            clean_base = True
+        elif a.startswith("--audio-file="):
+            audio_file = a.split("=")[1].strip()
+        elif a.startswith("--cues-file="):
+            cues_file = a.split("=")[1].strip()
+        elif a.startswith("--top-header="):
+            top_header = a.split("=")[1].strip()
+        elif a.startswith("--intro-header="):
+            intro_header = a.split("=")[1].strip()
+        elif a.startswith("--preview-quality="):
+            preview_quality = a.split("=")[1].strip()
+        elif a.startswith("--master-variant="):
+            master_variant = a.split("=", 1)[1].strip().lower()
+        elif a.startswith("--yt-hindi-variant="):
+            yt_hindi_variant = a.split("=", 1)[1].strip().lower()
+        elif a.startswith("--nokia-screen-color="):
+            nokia_screen_color = a.split("=", 1)[1].strip()
+        elif a.startswith("--screen-color="):
+            nokia_screen_color = a.split("=", 1)[1].strip()
+        elif a.startswith("--nokia-sticker="):
+            nokia_sticker = a.split("=", 1)[1].strip()
+        elif a.startswith("--sticker="):
+            nokia_sticker = a.split("=", 1)[1].strip()
+        elif a.startswith("--bg-folders="):
+            bg_folders = [f.strip() for f in a.split("=", 1)[1].split(",") if f.strip()]
+        elif a.startswith("--bg-folder="):
+            val = a.split("=", 1)[1].strip()
+            if val:
+                bg_folders = [val]
+
+    res = generate_lyric_video(
+        song_query=query,
+        output_path=out,
+        offset_seconds=offset,
+        aspect_ratio=aspect or "portrait",
+        font_name=font or "Impact",
+        font_size=size,
+        lang=lang,
+        template=template,
+        placement=placement,
+        y_percent=ypos,
+        x_percent=xpos,
+        brat_theme=brat_theme,
+        brat_bold=brat_bold,
+        brat_casing=brat_casing,
+        blur_amount=blur,
+        spacing=spacing,
+        word_spacing=word_spacing,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        clean_base=clean_base,
+        audio_file=audio_file,
+        cues_file=cues_file,
+        top_header=top_header,
+        preview_quality=preview_quality,
+        intro_header=intro_header,
+        master_variant=master_variant,
+        yt_hindi_variant=yt_hindi_variant,
+        nokia_screen_color=nokia_screen_color,
+        nokia_sticker=nokia_sticker,
+        bg_folders=bg_folders
+    )
+    if JSON_MODE:
+        print(f"__FINAL_RESULT__{json.dumps(res)}", flush=True)

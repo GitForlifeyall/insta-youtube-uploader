@@ -1,0 +1,703 @@
+@keyframes search-indicator {
+    0% {
+        width: 20%;
+        left: 0%;
+        transform: translate(-200%, 0);
+    }
+
+    33% {
+        width: 50%;
+        left: 20%;
+        transform: translate(0%, 0);
+    }
+
+    66% {
+        width: 40%;
+        left: 60%;
+        transform: translate(0%, 0);
+    }
+
+    100% {
+        width: 10%;
+        left: 100%;
+        transform: translate(100%, 0);
+    }
+}
+
+.searching {
+    padding: 2rem 0 1rem;
+    position: relative;
+    overflow: hidden;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.searching::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    background-color: var(--background-text-color);
+    height: 0.3rem;
+    opacity: 1;
+    transition: 100ms;
+    animation: search-indicator 1s linear infinite;
+}
+
+.searching.hidden {
+    padding: 0;
+    font-size: 0;
+}
+
+.searching.hidden::after {
+    opacity: 0;
+    height: 0;
+}
+
+.error {
+    background-color: var(--error-color);
+    color: var(--error-text-color);
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-top: 2rem;
+    text-align: center;
+    font-size: 0.9rem;
+    transition: 250ms var(--cubic-ease-out);
+}
+
+.error.hidden {
+    margin-top: 0;
+    padding: 0;
+    font-size: 0;
+    transition: 150ms var(--cubic-ease-out);
+}
+
+/**
+ * Screens
+ */
+.lyrics-image-screen {
+    width: 100%;
+    overflow: hidden;
+    opacity: 1;
+    transition: width 500ms ease-in-out, opacity 300ms ease-in-out 200ms;
+}
+
+.lyrics-image-screen.hidden {
+    opacity: 0;
+    width: 0%;
+    transition: width 500ms ease-in-out, opacity 300ms;
+}
+
+.screen-wrapper {
+    width: 100vw;
+    min-height: calc(100vh - 8rem);
+    padding: 5.5rem 0 1.5rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    transition: transform 500ms ease-in-out;
+}
+
+.hidden.left .screen-wrapper {
+    transform: translate(-100%, 0);
+}
+
+/* Screen 1: Search form */
+.search-form header {
+    text-align: center;
+}
+
+.search-form form {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem;
+    width: 100%;
+}
+
+.search-form form>input {
+    padding: 1rem;
+    border: none;
+    border-radius: 0.5rem;
+    outline: none;
+    width: 80%;
+    max-width: 25rem;
+}
+
+.search-form form > button {
+    outline: none;
+    padding: 1rem;
+    font-weight: 600;
+    opacity: 1;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.search-form form>button:hover {
+    cursor: pointer;
+    padding: 1rem 3rem;
+}
+
+.search-form form>button:disabled {
+    font-size: 0;
+    padding: 0;
+    opacity: 0;
+}
+
+/* Screen 2: Song selection */
+.search-results .song-selection {
+    display: flex;
+    justify-content: space-between;
+    row-gap: 1.5rem;
+    max-width: 50rem;
+    padding: 0 1.5rem;
+    flex-wrap: wrap;
+}
+
+.select-song {
+    width: 31%;
+    padding: 1rem;
+    background-color: var(--surface-light-color);
+    border-radius: 0.5rem;
+    transition: scale 200ms var(--cubic-ease-out),
+        background-color 200ms var(--cubic-ease-out);
+}
+
+.select-song:hover {
+    cursor: pointer;
+    background-color: var(--surface-color);
+    scale: 1.05;
+}
+
+@media screen and (max-width: 450px) {
+    .select-song {
+        width: 45%;
+    }
+}
+
+.select-song img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    object-position: center 0;
+    opacity: 1;
+    border-radius: 0.5rem;
+    background-image: url("https://lastfm.freetls.fastly.net/i/u/174s/2a96cbd8b46e442fc41c2b86b821562f.png");
+    background-size: cover;
+    background-position: center;
+    color: transparent;
+    transition: scale 150ms var(--cubic-ease-out),
+        aspect-ratio 400ms var(--cubic-ease-out),
+        opacity 600ms var(--cubic-ease-out);
+}
+
+.select-song:hover img {
+    scale: 1.07;
+}
+
+/* See the note on .song-info-cover.cover-loaded for why the placeholder is dropped. */
+.select-song img.cover-loaded {
+    background-image: none;
+}
+
+.hidden .select-song img {
+    aspect-ratio: 10;
+    opacity: 0;
+    transition: aspect-ratio 400ms var(--cubic-ease-out) 100ms,
+        opacity 400ms var(--cubic-ease-out) 100ms;
+}
+
+.select-song .name {
+    font-weight: 700;
+    padding-top: 0.5rem;
+    transition: 300ms var(--cubic-ease-out);
+}
+
+.hidden .select-song .name {
+    font-size: 0;
+    padding-top: 0;
+    transition: 300ms var(--cubic-ease-out) 100ms;
+}
+
+.select-song .authors {
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: 300ms var(--cubic-ease-out);
+}
+
+.hidden .select-song .authors {
+    font-size: 0;
+    transition: 300ms var(--cubic-ease-out) 100ms;
+}
+
+/* Screen 3: Lines selection */
+.song-info-display {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--surface-light-color);
+    border-radius: 0.75rem;
+    margin: 0.5rem 0 1rem;
+    max-width: 30rem;
+    width: 80%;
+}
+
+.song-info-cover {
+    width: 4rem;
+    height: 4rem;
+    border-radius: 0.5rem;
+    object-fit: cover;
+    background-image: url("https://lastfm.freetls.fastly.net/i/u/174s/2a96cbd8b46e442fc41c2b86b821562f.png");
+    background-size: cover;
+    background-position: center;
+    color: transparent;
+}
+
+/*
+ * Drop the placeholder once the real cover has loaded. Firefox otherwise bleeds
+ * up to ~1px of the placeholder background through the rounded corners, because
+ * an <img> with both a border-radius background and rounded replaced content
+ * clips the two separately (see .cover-loaded toggles in the controllers).
+ */
+.song-info-cover.cover-loaded {
+    background-image: none;
+}
+
+.song-info-text {
+    flex: 1;
+    overflow: hidden;
+}
+
+.song-info-name {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 0.25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.song-info-artist {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--surface-text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lines-selection {
+    padding-top: 0.5rem;
+    padding-bottom: 5rem;
+    width: calc(100% - 3rem);
+    max-width: 30rem;
+}
+
+.select-line {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 0.5rem;
+    background-color: var(--surface-light-color);
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 600;
+    width: 100%;
+    margin: 0 auto 1rem;
+    transition: padding 400ms var(--cubic-ease-out),
+        margin-bottom 400ms var(--cubic-ease-out),
+        font-size 400ms var(--cubic-ease-out), width 400ms var(--cubic-ease-out),
+        background-color 200ms var(--cubic-ease-out),
+        scale 200ms var(--cubic-ease-out);
+}
+
+.select-line:hover {
+    cursor: pointer;
+    background-color: var(--surface-color);
+    scale: 1.05;
+}
+
+.hidden .select-line,
+.select-line.hidden {
+    padding: 0;
+    margin-bottom: 0;
+    font-size: 0;
+    width: 0;
+}
+
+.select-line.selected {
+    background-color: var(--primary-color);
+    color: var(--primary-text-color);
+}
+
+/* Screen 4: Final options and download */
+.final-options header {
+    margin-bottom: 1rem;
+}
+
+.final-options .searching {
+    margin-bottom: 2rem;
+}
+
+.final-options .searching.hidden {
+    margin-bottom: 0;
+}
+
+.image-creator {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 3rem;
+}
+
+@media screen and (max-width: 1000px) {
+    .image-creator {
+        flex-direction: column;
+    }
+}
+
+.options {
+    max-width: 18rem;
+    width: 90vw;
+}
+
+.tab-selectors {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-start;
+}
+
+/* Sized so all four selectors fit one line inside the 18rem options column. */
+.tab-selectors > button {
+    min-width: 0;
+    padding: 0.5rem 0.4rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.tab-selectors > button:hover {
+    cursor: pointer;
+}
+
+.tab-selectors > button.primary {
+    animation: none;
+}
+
+.options {
+    overflow: visible;
+    height: 228px;
+    transition: height 200ms;
+}
+
+.tabs {
+    position: relative;
+    min-width: 0;
+}
+
+.tabs > .panel {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+    position: absolute;
+    inset: 0 0 auto 0;
+    visibility: hidden;
+    transform: translateY(-20%);
+    opacity: 0;
+    padding: 1rem;
+    margin-top: 0.5rem;
+    border-radius: 0.5rem;
+    background-color: var(--surface-light-color);
+    transition: 200ms;
+}
+
+.tabs > .panel.selected {
+    position: static;
+    visibility: visible;
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.color-selection {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    row-gap: 0.8rem;
+    width: 100%;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.hidden .color-selection {
+    padding: 0 1rem;
+}
+
+.color-selection>div {
+    width: 21%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    color: transparent;
+    transition: 150ms var(--cubic-ease-out);
+}
+
+.color-selection>div:hover {
+    cursor: pointer;
+    scale: 1.1;
+}
+
+.hidden .color-selection>div {
+    width: 0;
+}
+
+.color-selection > .custom-color {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: var(--background-text-color);
+    border: 1px solid var(--background-text-color);
+}
+
+.custom-color>input {
+    height: 0;
+    width: 0;
+    padding: 0;
+    border: none;
+}
+
+.custom-color>label:hover {
+    cursor: pointer;
+}
+
+.switch-container {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.switch-container:hover {
+    cursor: pointer;
+}
+
+.hidden .switch-container {
+    font-size: 0;
+    padding: 0;
+}
+
+.switch-container > div:not(.switch) {
+    flex: 1;
+}
+
+.switch-container .switch {
+    position: relative;
+    width: 4rem;
+    height: 2rem;
+    border-radius: 1rem;
+    border: 1px solid var(--background-text-color);
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.hidden .switch-container .switch {
+    height: 0;
+}
+
+.switch-container .switch::after {
+    content: '';
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 0.25rem;
+    transform: translate(0, -50%);
+    height: 1.5rem;
+    aspect-ratio: 1;
+    background-color: var(--background-text-color);
+    border-radius: 50%;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.switch-container.on .switch::after {
+    left: calc(100% - 1.75rem);
+}
+
+/*
+ * An option that only applies while another one is enabled. Collapsing it also
+ * cancels the panel's flex gap so no empty row is left behind.
+ */
+.conditional-option {
+    max-height: 2.5rem;
+    overflow: hidden;
+    opacity: 1;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.conditional-option.unavailable {
+    max-height: 0;
+    margin-top: -1rem;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.slider-container {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    transition: 200ms var(--cubic-ease-out);
+}
+
+.hidden .slider-container {
+    font-size: 0;
+    padding: 0;
+}
+
+.slider-container > div {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.slider-container > div span {
+    font-weight: 600;
+    color: var(--primary-color);
+    font-size: 0.9rem;
+}
+
+.slider-container input[type="range"] {
+    height: 0.5rem;
+    border-radius: 0.25rem;
+    outline: none;
+    background: var(--surface-color);
+    cursor: pointer;
+}
+
+.slider-container input[type="range"]::-webkit-slider-thumb,
+.slider-container input[type="range"]::-moz-range-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1.2rem;
+    height: 1.2rem;
+    border-radius: 50%;
+    background: var(--primary-color);
+    cursor: pointer;
+    transition: 150ms var(--cubic-ease-out);
+}
+
+.slider-container input[type="range"]::-webkit-slider-thumb:hover,
+.slider-container input[type="range"]::-moz-range-thumb:hover {
+    transform: scale(1.1);
+}
+
+.color-input-inline {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.color-input-inline input[type="color"] {
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid var(--background-text-color);
+    background: transparent;
+    cursor: pointer;
+}
+
+@media screen and (max-width: 450px) {
+    .select-song {
+        width: 47%;
+    }
+}
+
+.select-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.select-container > div {
+    flex: 2;
+}
+
+.select-container > select {
+    flex: 1; 
+    padding: 0.5rem 0.6rem 0.4rem;
+    border: 1px solid var(--background-text-color);
+    border-radius: 0.5rem;
+    outline: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--background-text-color);
+    background: transparent;
+}
+
+.tag-select-container {
+    gap: 0.25rem;
+}
+
+/* Presets tab */
+.preset-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.preset {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.preset > button {
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.preset > button:hover {
+    background-color: var(--surface-color);
+}
+
+.preset > .preset-apply {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.preset.active > .preset-apply {
+    background-color: var(--primary-color);
+    color: var(--primary-text-color);
+}
+
+.preset > .preset-action {
+    padding: 0.5rem 0.4rem;
+    font-size: 1.1rem;
+}
+
+.preset-save {
+    justify-content: center;
+    width: 100%;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.preset-save:hover {
+    background-color: var(--surface-color);
+}
+
+.tag-select-container > label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--background-text-color);
+    cursor: pointer;
+}
+
+.tag-select-container > label:hover {
+    background: var(--surface-light-color);
+}

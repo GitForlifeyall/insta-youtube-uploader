@@ -1,0 +1,81 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Sensitive data & sessions
+*.session.json
+.session.json
+sessions/
+**/sessions/
+data/
+**/data/
+cookies.json
+*.cookie
+*.flag
+
+# Large Archives & Binaries (>100MB / backups)
+*.zip
+*.tar.gz
+*.tar
+*.bak
+docker_export/
+redroid_instagram_complete.zip
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs & temporary output
+*.log
+scrcpy_*.log
+youtube_audio_error.log
+morphelogs.txt
+
+# Media / temporary uploads
+media_queue/
+uploads/
+*.mp4
+*.mkv
+*.mov
+*.png
+*.jpg
+*.jpeg
+*.xml
+
+# Keep specific necessary files if needed
+!ytuploader/upload files/.gitkeep
