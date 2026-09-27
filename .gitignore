@@ -54,6 +54,10 @@ cookies.json
 docker_export/
 redroid_instagram_complete.zip
 
+# Redroid Manager Web UI
+redroid_manager/
+**/redroid_manager/
+
 # IDE & Editor files
 .vscode/
 .idea/
