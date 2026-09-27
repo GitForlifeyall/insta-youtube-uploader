@@ -166,16 +166,39 @@ async def container_action(payload: Dict[str, Any]):
     await manager.broadcast_log(f"[SYSTEM] Container Action '{action}' requested for account '{account}' ({target})...\n")
 
     if action == "scrcpy":
-        # Launch scrcpy in background detached
+        # Launch scrcpy in background directly
         try:
-            # First ensure adb connect
-            subprocess.run(["adb", "connect", target], capture_output=True)
-            scrcpy_cmd = f'scrcpy -s {target} --window-title "Redroid - {account} ({target})" --always-on-top --max-size 1024'
+            adb_bin = shutil.which("adb") or "adb"
+            scrcpy_bin = shutil.which("scrcpy") or "scrcpy"
+
+            # Connect target first
+            subprocess.run([adb_bin, "connect", target], capture_output=True)
+
+            scrcpy_args = [
+                scrcpy_bin,
+                "-s", target,
+                "--video-codec=h264",
+                "--video-encoder=OMX.google.h264.encoder",
+                "--no-audio",
+                "--video-bit-rate=4M",
+                "--max-fps=30",
+                "--stay-awake",
+                "--window-title", f"Redroid - {account} ({target})"
+            ]
+
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+
             subprocess.Popen(
-                ["powershell", "-NoProfile", "-Command", f"Start-Process {scrcpy_cmd}"],
-                shell=False
+                scrcpy_args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+                close_fds=True
             )
-            await manager.broadcast_log(f"[+] Launched Scrcpy window for {target}\n")
+            await manager.broadcast_log(f"[+] Successfully launched Scrcpy live window for {target}\n")
             return {"success": True, "message": f"Scrcpy window opened for {target}"}
         except Exception as e:
             await manager.broadcast_log(f"[ERROR] Failed to launch Scrcpy: {e}\n")
