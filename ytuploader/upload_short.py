@@ -729,6 +729,32 @@ def upload_short_to_youtube(
     run_adb(adb_exe, target, "shell", "input", "keyevent", "4")
     sleep_with_control(1.5, pause_event, stop_event)
 
+    # Click 'Show more' / 'More options' above the Upload button
+    _l("[*] Expanding additional options (tapping 'Show more')...")
+    nodes = dump_ui_nodes(adb_exe, target)
+    show_more_node = (
+        find_node(nodes, text="Show more")
+        or find_node(nodes, desc="Show more")
+        or find_node(nodes, text="More options")
+        or find_node(nodes, desc="More options")
+        or find_node(nodes, text="Show more options")
+        or find_node(nodes, desc="Show more options")
+        or find_node(nodes, res_id="show_more")
+        or find_node(nodes, res_id="more_options")
+    )
+    if show_more_node and show_more_node.get("cx") and show_more_node.get("cy"):
+        run_adb(adb_exe, target, "shell", "input", "tap", str(show_more_node["cx"]), str(show_more_node["cy"]))
+        _l(f"[+] Tapped 'Show more' at ({show_more_node['cx']}, {show_more_node['cy']}).")
+        sleep_with_control(1.5, pause_event, stop_event)
+    else:
+        # Fallback: tap directly above Upload button if not found in hierarchy
+        upload_btn_temp = find_node(nodes, text="Upload Short") or find_node(nodes, res_id="upload_bottom_button")
+        fallback_y = max(100, upload_btn_temp["cy"] - 95) if upload_btn_temp and upload_btn_temp.get("cy") else 1020
+        fallback_x = upload_btn_temp["cx"] if upload_btn_temp and upload_btn_temp.get("cx") else 360
+        run_adb(adb_exe, target, "shell", "input", "tap", str(fallback_x), str(fallback_y))
+        _l(f"[*] Tapped 'Show more' fallback location at ({fallback_x}, {fallback_y}).")
+        sleep_with_control(1.5, pause_event, stop_event)
+
     # Tap Upload Short / Upload button
     _l("[+] Tapping Upload button...")
     nodes = dump_ui_nodes(adb_exe, target)
