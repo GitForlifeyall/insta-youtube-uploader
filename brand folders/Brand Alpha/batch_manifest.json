@@ -1,0 +1,732 @@
+{
+  "batch_id": "batch_1790625620555_1x3sm",
+  "title": "YT Hindi Batch 9/29/2026",
+  "status": "completed",
+  "total_items": 3,
+  "completed_items": 3,
+  "failed_items": 0,
+  "preview_quality": "fast",
+  "render_variant": "film_burn",
+  "watermark": "lyrics.on.lips",
+  "bg_folder": "",
+  "updated_at": "2026-09-28T20:07:12.634Z",
+  "items": [
+    {
+      "item_index": 1,
+      "query": "https://www.youtube.com/shorts/5zCwnCu8VZY",
+      "status": "succeeded",
+      "output_filename": "001_https_www_youtube_com_shorts_5zcw.mp4",
+      "video_url": "/videos/bulk/batch_1790625620555_1x3sm/001_https_www_youtube_com_shorts_5zcw.mp4",
+      "source_video_url": "/videos/bulk/batch_1790625620555_1x3sm/001_https_www_youtube_com_shorts_5zcw_raw.mp4",
+      "error_message": null,
+      "metadata": {
+        "status": "success",
+        "query": "https://www.youtube.com/shorts/5zCwnCu8VZY",
+        "output_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\output\\bulk\\batch_1790625620555_1x3sm\\001_https_www_youtube_com_shorts_5zcw.mp4.part.mp4",
+        "audio_path": "temp_audio.m4a",
+        "ass_path": "lyrics.ass",
+        "track_name": "Rabba Lakh Lakh Shukar Manaawa",
+        "artist_name": "Ustad Nusrat Fateh Ali Khan",
+        "start_seconds": 0,
+        "end_seconds": 15.701,
+        "duration": 15.701,
+        "aspect_ratio": "portrait",
+        "font_name": "EB Garamond",
+        "template": "yt_hindi_type",
+        "brat_theme": null,
+        "bg_color": "black",
+        "placement": "center",
+        "y_percent": 50,
+        "x_percent": 50,
+        "blur_amount": 3.6,
+        "spacing": null,
+        "word_spacing": null,
+        "clean_base": false,
+        "language": "roman_hindi",
+        "totalLines": 3,
+        "syncedLines": [
+          {
+            "index": 0,
+            "timestamp": "00:00.00",
+            "timeSeconds": 0,
+            "endSeconds": 3.56,
+            "text": "Agar woh mil jaaye toh kya karoge? <3"
+          },
+          {
+            "index": 1,
+            "timestamp": "00:03.56",
+            "timeSeconds": 3.56,
+            "endSeconds": 12.24,
+            "text": "Rabba lakh lakh shukar manaawa 🤍"
+          },
+          {
+            "index": 2,
+            "timestamp": "00:12.24",
+            "timeSeconds": 12.24,
+            "endSeconds": 15.64,
+            "text": "Je kadi mera yaar mil jaye >>"
+          }
+        ],
+        "rawLrc": "[00:00.00] Agar woh mil jaaye toh kya karoge? <3\n[00:03.56] Rabba lakh lakh shukar manaawa 🤍\n[00:12.24] Je kadi mera yaar mil jaye >>",
+        "used_clips": [
+          {
+            "filename": "Escape_to_Bukidnon_–_A_Nature_Lover’s_Retreat!_🌿✨_108579041012639423_1080x1920.mp4",
+            "path": "yt aesthe/Aesthetic Nature/Escape_to_Bukidnon_–_A_Nature_Lover’s_Retreat!_🌿✨_108579041012639423_1080x1920.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Aesthetic Nature\\Escape_to_Bukidnon_–_A_Nature_Lover’s_Retreat!_🌿✨_108579041012639423_1080x1920.mp4",
+            "folder": "yt aesthe/Aesthetic Nature",
+            "duration": 18.95,
+            "size_mb": 8.35,
+            "preview_url": "/background-videos/yt aesthe/Aesthetic Nature/Escape_to_Bukidnon_–_A_Nature_Lover’s_Retreat!_🌿✨_108579041012639423_1080x1920.mp4"
+          },
+          {
+            "filename": "7_744782857147252896_720x1280.mp4",
+            "path": "yt aesthe/Dark Nature/7_744782857147252896_720x1280.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Dark Nature\\7_744782857147252896_720x1280.mp4",
+            "folder": "yt aesthe/Dark Nature",
+            "duration": 4.18,
+            "size_mb": 1.15,
+            "preview_url": "/background-videos/yt aesthe/Dark Nature/7_744782857147252896_720x1280.mp4"
+          }
+        ],
+        "used_headers": [
+          {
+            "type": "intro_header",
+            "type_label": "Intro POV Header",
+            "text": "Agar woh mil jaaye {toh kya karoge}yellow? <3",
+            "raw_text": "Agar woh mil jaaye {toh kya karoge}yellow? <3",
+            "file": "intro_headers.txt",
+            "is_custom": true
+          }
+        ],
+        "source_video_url": "/videos/bulk/batch_1790625620555_1x3sm/001_https_www_youtube_com_shorts_5zcw_raw.mp4",
+        "source_video_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\output\\bulk\\batch_1790625620555_1x3sm\\001_https_www_youtube_com_shorts_5zcw_raw.mp4",
+        "source_video_filename": "001_https_www_youtube_com_shorts_5zcw_raw.mp4",
+        "source_video_duration": 16,
+        "rewritten_title": "Rabba Lakh Lakh Shukar Manaawa — Nusrat Fateh Ali Khan 🤍",
+        "rewritten_caption": "Rabba Lakh Lakh Shukar Manaawa - NFAK | Aesthetic Lyrics Video\n\nLose yourself in the timeless devotion and soulful vocals of Ustad Nusrat Fateh Ali Khan. Put on your earphones and feel every beat 🎧🤍. Save this for quiet late-night thoughts 🌙 and let the music heal your soul.\n\nSong: Rabba Lakh Lakh Shukar Manaawa\nArtist / Singer: Ustad Nusrat Fateh Ali Khan\nGenre: Sufi Qawwali / Devotional\nLanguage: Punjabi\n\nIf you love romantic Bollywood songs, this one is a must-listen! ❤️\nDon’t forget to Like 👍, Share 🔄 & Subscribe 🔔 for more amazing music.\n\nDon’t forget to Like 👍, Share 🔄 & Subscribe 🔔 for more amazing music.\n\n#nfak #lyricvideo #NusratFatehAliKhan #RabbaLakhLakhShukarManaawa #SufiQawwali #QawwaliLyrics #DevotionalMusic #AestheticLyrics #LoveStatus",
+        "caption": "Rabba Lakh Lakh Shukar Manaawa - NFAK | Aesthetic Lyrics Video\n\nLose yourself in the timeless devotion and soulful vocals of Ustad Nusrat Fateh Ali Khan. Put on your earphones and feel every beat 🎧🤍. Save this for quiet late-night thoughts 🌙 and let the music heal your soul.\n\nSong: Rabba Lakh Lakh Shukar Manaawa\nArtist / Singer: Ustad Nusrat Fateh Ali Khan\nGenre: Sufi Qawwali / Devotional\nLanguage: Punjabi\n\nIf you love romantic Bollywood songs, this one is a must-listen! ❤️\nDon’t forget to Like 👍, Share 🔄 & Subscribe 🔔 for more amazing music.\n\nDon’t forget to Like 👍, Share 🔄 & Subscribe 🔔 for more amazing music.\n\n#nfak #lyricvideo #NusratFatehAliKhan #RabbaLakhLakhShukarManaawa #SufiQawwali #QawwaliLyrics #DevotionalMusic #AestheticLyrics #LoveStatus",
+        "tags": [
+          "rabba lakh lakh shukar by nusrat fateh ali khan",
+          "love",
+          "lyrical video",
+          "Rabba Lakh Lakh Shukar Manaawa",
+          "Nusrat Fateh Ali Khan",
+          "NFAK qawwali",
+          "Sufi Qawwali",
+          "Devotional Music",
+          "Aesthetic Lyrics",
+          "Love Status",
+          "Punjabi Sufi songs",
+          "slowed and reverb nfak",
+          "soulful qawwali lyrics",
+          "peaceful Sufi music",
+          "romantic WhatsApp status"
+        ],
+        "song_name": "Rabba Lakh Lakh Shukar Manaawa",
+        "detailed_cues": [
+          {
+            "timeSeconds": 0,
+            "endSeconds": 3.56,
+            "text": "Agar woh mil jaaye {toh kya karoge}yellow? <3",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.378,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "ماہی مل پئے تے کھڑ کھڑ ہس پاں",
+              "canonical_similarity": 0.189,
+              "composite_confidence": 0.378
+            }
+          },
+          {
+            "timeSeconds": 3.56,
+            "endSeconds": 12.24,
+            "text": "Rabba lakh lakh shukar manaawa 🤍",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.38,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "کِتے اک واری آ جا وے",
+              "canonical_similarity": 0.192,
+              "composite_confidence": 0.38
+            }
+          },
+          {
+            "timeSeconds": 12.24,
+            "endSeconds": 15.64,
+            "text": "Je kadi mera yaar mil jaye >>",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.401,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "اکو یار دے ملن دی تانگ اے",
+              "canonical_similarity": 0.222,
+              "composite_confidence": 0.401
+            }
+          }
+        ],
+        "intro_header": "Agar woh mil jaaye {toh kya karoge}yellow? <3",
+        "metrics": {
+          "wall_time_seconds": 110.97,
+          "render_time_seconds": 14.64,
+          "python_cpu_time_seconds": 53.2,
+          "python_cpu_utilization_percent": 47.9,
+          "peak_memory_mb": 2558.31,
+          "output_size_mb": 5.87,
+          "video_duration_seconds": 15.7,
+          "render_speed_x": 0.14,
+          "render_speed_x_excluding_download": 1.07,
+          "encoder": "h264_nvenc",
+          "resolution": "540x960",
+          "fps": 24
+        }
+      }
+    },
+    {
+      "item_index": 2,
+      "query": "https://www.youtube.com/shorts/9TbKi_9zS5c",
+      "status": "succeeded",
+      "output_filename": "002_https_www_youtube_com_shorts_9tbk.mp4",
+      "video_url": "/videos/bulk/batch_1790625620555_1x3sm/002_https_www_youtube_com_shorts_9tbk.mp4",
+      "source_video_url": "/videos/bulk/batch_1790625620555_1x3sm/002_https_www_youtube_com_shorts_9tbk_raw.mp4",
+      "error_message": null,
+      "metadata": {
+        "status": "success",
+        "query": "https://www.youtube.com/shorts/9TbKi_9zS5c",
+        "output_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\output\\bulk\\batch_1790625620555_1x3sm\\002_https_www_youtube_com_shorts_9tbk.mp4.part.mp4",
+        "audio_path": "temp_audio.m4a",
+        "ass_path": "lyrics.ass",
+        "track_name": "Alvida Alvida (From \"Dar-E-Nijaat\")",
+        "artist_name": "Shafqat Amanat Ali",
+        "start_seconds": 0,
+        "end_seconds": 19.712,
+        "duration": 19.712,
+        "aspect_ratio": "portrait",
+        "font_name": "EB Garamond",
+        "template": "yt_hindi_type",
+        "brat_theme": null,
+        "bg_color": "black",
+        "placement": "center",
+        "y_percent": 50,
+        "x_percent": 50,
+        "blur_amount": 3.6,
+        "spacing": null,
+        "word_spacing": null,
+        "clean_base": false,
+        "language": "roman_hindi",
+        "totalLines": 7,
+        "syncedLines": [
+          {
+            "index": 0,
+            "timestamp": "00:00.40",
+            "timeSeconds": 0.4,
+            "endSeconds": 3.9,
+            "text": "This is the best masterpiece qawwali song 🤍"
+          },
+          {
+            "index": 1,
+            "timestamp": "00:03.90",
+            "timeSeconds": 3.9,
+            "endSeconds": 5.9,
+            "text": "Hijr-e-mohabbat yara..."
+          },
+          {
+            "index": 2,
+            "timestamp": "00:05.90",
+            "timeSeconds": 5.9,
+            "endSeconds": 8.2,
+            "text": "Uspe ye dil bechara"
+          },
+          {
+            "index": 3,
+            "timestamp": "00:08.20",
+            "timeSeconds": 8.2,
+            "endSeconds": 12.533,
+            "text": "La-dawaa"
+          },
+          {
+            "index": 4,
+            "timestamp": "00:12.53",
+            "timeSeconds": 12.533,
+            "endSeconds": 15.033,
+            "text": "Usko bata dekoi"
+          },
+          {
+            "index": 5,
+            "timestamp": "00:15.03",
+            "timeSeconds": 15.033,
+            "endSeconds": 16.933,
+            "text": "Aankheinyaadonmeinkhoi"
+          },
+          {
+            "index": 6,
+            "timestamp": "00:16.93",
+            "timeSeconds": 16.933,
+            "endSeconds": 19.533,
+            "text": "Uspe bhi farz hai wafaa <3"
+          }
+        ],
+        "rawLrc": "[00:00.40] This is the best masterpiece qawwali song 🤍\n[00:03.90] Hijr-e-mohabbat yara...\n[00:05.90] Uspe ye dil bechara\n[00:08.20] La-dawaa\n[00:12.53] Usko bata dekoi\n[00:15.03] Aankheinyaadonmeinkhoi\n[00:16.93] Uspe bhi farz hai wafaa <3",
+        "used_clips": [
+          {
+            "filename": "The_beauty_of_Holding_Hands_🌌✋_524387950384933884_1080x1920.mp4",
+            "path": "yt aesthe/Romantic Couple/The_beauty_of_Holding_Hands_🌌✋_524387950384933884_1080x1920.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Romantic Couple\\The_beauty_of_Holding_Hands_🌌✋_524387950384933884_1080x1920.mp4",
+            "folder": "yt aesthe/Romantic Couple",
+            "duration": 17,
+            "size_mb": 1.3,
+            "preview_url": "/background-videos/yt aesthe/Romantic Couple/The_beauty_of_Holding_Hands_🌌✋_524387950384933884_1080x1920.mp4"
+          },
+          {
+            "filename": "#dark_#mountains_14847873765838818_1080x1770.mp4",
+            "path": "yt aesthe/Dark Nature/#dark_#mountains_14847873765838818_1080x1770.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Dark Nature\\#dark_#mountains_14847873765838818_1080x1770.mp4",
+            "folder": "yt aesthe/Dark Nature",
+            "duration": 4.16,
+            "size_mb": 1.08,
+            "preview_url": "/background-videos/yt aesthe/Dark Nature/#dark_#mountains_14847873765838818_1080x1770.mp4"
+          },
+          {
+            "filename": "inst_liliya.flee_654570127102858017_1080x1920.mp4",
+            "path": "yt aesthe/Aesthetic Couple/inst_liliya.flee_654570127102858017_1080x1920.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Aesthetic Couple\\inst_liliya.flee_654570127102858017_1080x1920.mp4",
+            "folder": "yt aesthe/Aesthetic Couple",
+            "duration": 11.33,
+            "size_mb": 1.72,
+            "preview_url": "/background-videos/yt aesthe/Aesthetic Couple/inst_liliya.flee_654570127102858017_1080x1920.mp4"
+          },
+          {
+            "filename": "Pinterest_Video_615656211598129616_615656211598129616_720x1280.mp4",
+            "path": "yt aesthe/Aesthetic couple abstract/Pinterest_Video_615656211598129616_615656211598129616_720x1280.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Aesthetic couple abstract\\Pinterest_Video_615656211598129616_615656211598129616_720x1280.mp4",
+            "folder": "yt aesthe/Aesthetic couple abstract",
+            "duration": 14.4,
+            "size_mb": 1.82,
+            "preview_url": "/background-videos/yt aesthe/Aesthetic couple abstract/Pinterest_Video_615656211598129616_615656211598129616_720x1280.mp4"
+          },
+          {
+            "filename": "Pinterest_Video_939070959821306677_939070959821306677_1154x1796.mp4",
+            "path": "yt aesthe/Aesthetic couple abstract/Pinterest_Video_939070959821306677_939070959821306677_1154x1796.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Aesthetic couple abstract\\Pinterest_Video_939070959821306677_939070959821306677_1154x1796.mp4",
+            "folder": "yt aesthe/Aesthetic couple abstract",
+            "duration": 13.98,
+            "size_mb": 1.39,
+            "preview_url": "/background-videos/yt aesthe/Aesthetic couple abstract/Pinterest_Video_939070959821306677_939070959821306677_1154x1796.mp4"
+          },
+          {
+            "filename": "peaceful_vibes_1010354497641565082_1080x1920.mp4",
+            "path": "yt aesthe/Dark Nature/peaceful_vibes_1010354497641565082_1080x1920.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Dark Nature\\peaceful_vibes_1010354497641565082_1080x1920.mp4",
+            "folder": "yt aesthe/Dark Nature",
+            "duration": 4.18,
+            "size_mb": 1.45,
+            "preview_url": "/background-videos/yt aesthe/Dark Nature/peaceful_vibes_1010354497641565082_1080x1920.mp4"
+          }
+        ],
+        "used_headers": [
+          {
+            "type": "intro_header",
+            "type_label": "Intro POV Header",
+            "text": "This is the best masterpiece {qawwali song}yellow 🤍",
+            "raw_text": "This is the best masterpiece {qawwali song}yellow 🤍",
+            "file": "intro_headers.txt",
+            "is_custom": true
+          }
+        ],
+        "source_video_url": "/videos/bulk/batch_1790625620555_1x3sm/002_https_www_youtube_com_shorts_9tbk_raw.mp4",
+        "source_video_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\output\\bulk\\batch_1790625620555_1x3sm\\002_https_www_youtube_com_shorts_9tbk_raw.mp4",
+        "source_video_filename": "002_https_www_youtube_com_shorts_9tbk_raw.mp4",
+        "source_video_duration": 20,
+        "rewritten_title": "Alvida — Shafqat Amanat Ali | Soulful OST Lyrics 🤍",
+        "rewritten_caption": "Kuch alvida aise hote hain jo lafzon mein nahi, dil ki gehraiyon mein reh jate hain. Put on your earphones, close your eyes, and let the soul-stirring vocals of Shafqat Amanat Ali transport you to a world of longing and memories. Save this for quiet late-night thoughts 🌙\n\n🎵\n\n🎵 Song Credits:\n• Song: Alvida Alvida \n• Singer(s): Shafqat Amanat Ali\n• Lyricist: Imran Raza\n•Producer: Momina Duraid, Humayun Saeed, Shehzad Naseeb\n• Music Label: MD Productions / HUM TV\n\n• Video Edit: @sumitlyrics90 \n\n📌 Disclaimer:\n\"Copyright Disclaimer under Section 107 of the copyright act 1976, allowance is made for fair use for purposes such as criticism, comment, news reporting, scholarship, and research. Fair use is a use permitted by copyright statute that might otherwise be infringing. Non-profit, educational or personal use tips the balance in favor of fair use. All audio/video content belongs to their respective original creators.\"\n\n \n\nSEO Keywords\n\nAlvida Pakistani Song, Alvida Drama Title Song, Alvida OST Shafqat Amanat Ali, Alvida Full Song Lyrics, Sahir Ali Bagga Alvida Music, Imran Abbas Sanam Jung Alvida, Hum TV Drama Songs, Sad Pakistani OST Lofi Remix, Alvida Status Video Download, Pakistani Drama Title Track Lofi\n\n#shorts #pakistan #lyrics #video #Alvida #AlvidaOST #ShafqatAmanatAli #SahirAliBagga #PakistaniOST #PakistaniDrama #HumTV #LofiMusic #SlowedAndReverb #SadSongs #UrduLyrics #StatusVideo #ReelsViral",
+        "caption": "Kuch alvida aise hote hain jo lafzon mein nahi, dil ki gehraiyon mein reh jate hain. Put on your earphones, close your eyes, and let the soul-stirring vocals of Shafqat Amanat Ali transport you to a world of longing and memories. Save this for quiet late-night thoughts 🌙\n\n🎵\n\n🎵 Song Credits:\n• Song: Alvida Alvida \n• Singer(s): Shafqat Amanat Ali\n• Lyricist: Imran Raza\n•Producer: Momina Duraid, Humayun Saeed, Shehzad Naseeb\n• Music Label: MD Productions / HUM TV\n\n• Video Edit: @sumitlyrics90 \n\n📌 Disclaimer:\n\"Copyright Disclaimer under Section 107 of the copyright act 1976, allowance is made for fair use for purposes such as criticism, comment, news reporting, scholarship, and research. Fair use is a use permitted by copyright statute that might otherwise be infringing. Non-profit, educational or personal use tips the balance in favor of fair use. All audio/video content belongs to their respective original creators.\"\n\n \n\nSEO Keywords\n\nAlvida Pakistani Song, Alvida Drama Title Song, Alvida OST Shafqat Amanat Ali, Alvida Full Song Lyrics, Sahir Ali Bagga Alvida Music, Imran Abbas Sanam Jung Alvida, Hum TV Drama Songs, Sad Pakistani OST Lofi Remix, Alvida Status Video Download, Pakistani Drama Title Track Lofi\n\n#shorts #pakistan #lyrics #video #Alvida #AlvidaOST #ShafqatAmanatAli #SahirAliBagga #PakistaniOST #PakistaniDrama #HumTV #LofiMusic #SlowedAndReverb #SadSongs #UrduLyrics #StatusVideo #ReelsViral",
+        "tags": [
+          "Alvida",
+          "Shafqat Amanat Ali",
+          "Alvida OST",
+          "Pakistani Drama Songs",
+          "Hum TV OST",
+          "Urdu Lyrics",
+          "Sad Pakistani Songs",
+          "Lofi Urdu",
+          "Slowed and Reverb",
+          "Alvida Drama Lyrics",
+          "Emotional Pakistani OST",
+          "Soulful Music",
+          "Aesthetic Lyrics",
+          "Dar-E-Nijaat OST",
+          "Pakistani Music"
+        ],
+        "song_name": "Alvida",
+        "detailed_cues": [
+          {
+            "timeSeconds": 0.4,
+            "endSeconds": 3.9,
+            "text": "This is the best masterpiece {qawwali song}yellow 🤍",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.366,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "پیار میں نہ کر خود غرضی بے وفا",
+              "canonical_similarity": 0.173,
+              "composite_confidence": 0.366
+            }
+          },
+          {
+            "timeSeconds": 3.9,
+            "endSeconds": 5.9,
+            "text": "Hijr-e-mohabbat yara...",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.381,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "باخدا...",
+              "canonical_similarity": 0.194,
+              "composite_confidence": 0.381
+            }
+          },
+          {
+            "timeSeconds": 5.9,
+            "endSeconds": 8.2,
+            "text": "Uspe ye dil bechara",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.373,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "مٹا دیں کس طرح",
+              "canonical_similarity": 0.182,
+              "composite_confidence": 0.373
+            }
+          },
+          {
+            "timeSeconds": 8.2,
+            "endSeconds": 12.53,
+            "text": "La-dawaa",
+            "status": "flagged_hallucination",
+            "tier": 3,
+            "confidence": 0.243,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "decision_rationale": "Flagged hallucination: novel word 'ishq' not in reference or OCR input. Fell back to OCR input.",
+              "canonical_match": "",
+              "canonical_similarity": 0,
+              "composite_confidence": 0.243
+            }
+          },
+          {
+            "timeSeconds": 12.533,
+            "endSeconds": 15.03,
+            "text": "Usko bata dekoi",
+            "status": "flagged_hallucination",
+            "tier": 3,
+            "confidence": 0.349,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "decision_rationale": "Flagged hallucination: novel word 'koyi' not in reference or OCR input. Fell back to OCR input.",
+              "canonical_match": "درد سہنے لگے",
+              "canonical_similarity": 0.148,
+              "composite_confidence": 0.349
+            }
+          },
+          {
+            "timeSeconds": 15.033,
+            "endSeconds": 16.93,
+            "text": "Aankheinyaadonmeinkhoi",
+            "status": "flagged_hallucination",
+            "tier": 3,
+            "confidence": 0.243,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "decision_rationale": "Flagged hallucination: novel word 'khoyi' not in reference or OCR input. Fell back to OCR input.",
+              "canonical_match": "",
+              "canonical_similarity": 0,
+              "composite_confidence": 0.243
+            }
+          },
+          {
+            "timeSeconds": 16.933,
+            "endSeconds": 19.533,
+            "text": "Uspe bhi farz hai wafaa <3",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.401,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "مل کے بھی جو نہ ملا",
+              "canonical_similarity": 0.222,
+              "composite_confidence": 0.401
+            }
+          }
+        ],
+        "intro_header": "This is the best masterpiece {qawwali song}yellow 🤍",
+        "metrics": {
+          "wall_time_seconds": 152.89,
+          "render_time_seconds": 13.76,
+          "python_cpu_time_seconds": 75.25,
+          "python_cpu_utilization_percent": 49.2,
+          "peak_memory_mb": 2549.25,
+          "output_size_mb": 4.85,
+          "video_duration_seconds": 19.71,
+          "render_speed_x": 0.13,
+          "render_speed_x_excluding_download": 1.43,
+          "encoder": "h264_nvenc",
+          "resolution": "540x960",
+          "fps": 24
+        }
+      }
+    },
+    {
+      "item_index": 3,
+      "query": "https://www.youtube.com/shorts/8Acul_v3e84",
+      "status": "succeeded",
+      "output_filename": "003_https_www_youtube_com_shorts_8acu.mp4",
+      "video_url": "/videos/bulk/batch_1790625620555_1x3sm/003_https_www_youtube_com_shorts_8acu.mp4",
+      "source_video_url": "/videos/bulk/batch_1790625620555_1x3sm/003_https_www_youtube_com_shorts_8acu_raw.mp4",
+      "error_message": null,
+      "metadata": {
+        "status": "success",
+        "query": "https://www.youtube.com/shorts/8Acul_v3e84",
+        "output_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\output\\bulk\\batch_1790625620555_1x3sm\\003_https_www_youtube_com_shorts_8acu.mp4.part.mp4",
+        "audio_path": "temp_audio.m4a",
+        "ass_path": "lyrics.ass",
+        "track_name": "Khuda Bhi (From \"Ek Paheli Leela\")",
+        "artist_name": "Mohit Chauhan",
+        "start_seconds": 0,
+        "end_seconds": 15.381,
+        "duration": 15.381,
+        "aspect_ratio": "portrait",
+        "font_name": "EB Garamond",
+        "template": "yt_hindi_type",
+        "brat_theme": null,
+        "bg_color": "black",
+        "placement": "center",
+        "y_percent": 50,
+        "x_percent": 50,
+        "blur_amount": 3.6,
+        "spacing": null,
+        "word_spacing": null,
+        "clean_base": false,
+        "language": "roman_hindi",
+        "totalLines": 5,
+        "syncedLines": [
+          {
+            "index": 0,
+            "timestamp": "00:00.17",
+            "timeSeconds": 0.167,
+            "endSeconds": 5.533,
+            "text": "Kaisi Lag Rahi Hoon?"
+          },
+          {
+            "index": 1,
+            "timestamp": "00:05.53",
+            "timeSeconds": 5.533,
+            "endSeconds": 8.133,
+            "text": "Tere aage fike-fike..."
+          },
+          {
+            "index": 2,
+            "timestamp": "00:08.13",
+            "timeSeconds": 8.133,
+            "endSeconds": 10.567,
+            "text": "Saare singaar hain 🤍"
+          },
+          {
+            "index": 3,
+            "timestamp": "00:10.57",
+            "timeSeconds": 10.567,
+            "endSeconds": 13.2,
+            "text": "Main to kya farishte bhi >>"
+          },
+          {
+            "index": 4,
+            "timestamp": "00:13.20",
+            "timeSeconds": 13.2,
+            "endSeconds": 15.7,
+            "text": "Tujpe nisaar hain..."
+          }
+        ],
+        "rawLrc": "[00:00.17] Kaisi Lag Rahi Hoon?\n[00:05.53] Tere aage fike-fike...\n[00:08.13] Saare singaar hain 🤍\n[00:10.57] Main to kya farishte bhi >>\n[00:13.20] Tujpe nisaar hain...",
+        "used_clips": [
+          {
+            "filename": "Pinterest_Video_907827237383694605_907827237383694605_720x1280.mp4",
+            "path": "yt aesthe/Sweet Couple/Pinterest_Video_907827237383694605_907827237383694605_720x1280.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Sweet Couple\\Pinterest_Video_907827237383694605_907827237383694605_720x1280.mp4",
+            "folder": "yt aesthe/Sweet Couple",
+            "duration": 13.89,
+            "size_mb": 2.04,
+            "preview_url": "/background-videos/yt aesthe/Sweet Couple/Pinterest_Video_907827237383694605_907827237383694605_720x1280.mp4"
+          },
+          {
+            "filename": "❤♡_𝚁𝙾𝙼𝙰𝙽𝚃𝙸𝙲_♡❤_351912467629316_720x1280.mp4",
+            "path": "yt aesthe/Romantic Couple/❤♡_𝚁𝙾𝙼𝙰𝙽𝚃𝙸𝙲_♡❤_351912467629316_720x1280.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Romantic Couple\\❤♡_𝚁𝙾𝙼𝙰𝙽𝚃𝙸𝙲_♡❤_351912467629316_720x1280.mp4",
+            "folder": "yt aesthe/Romantic Couple",
+            "duration": 12.31,
+            "size_mb": 2.06,
+            "preview_url": "/background-videos/yt aesthe/Romantic Couple/❤♡_𝚁𝙾𝙼𝙰𝙽𝚃𝙸𝙲_♡❤_351912467629316_720x1280.mp4"
+          },
+          {
+            "filename": "💞_30962316183978915_1080x1920.mp4",
+            "path": "yt aesthe/Romantic Couple/💞_30962316183978915_1080x1920.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Romantic Couple\\💞_30962316183978915_1080x1920.mp4",
+            "folder": "yt aesthe/Romantic Couple",
+            "duration": 11.61,
+            "size_mb": 0.39,
+            "preview_url": "/background-videos/yt aesthe/Romantic Couple/💞_30962316183978915_1080x1920.mp4"
+          },
+          {
+            "filename": "Some_moments_become_immortal_even_after_turning_to_dust..._j_578571883433296153_720x1280.mp4",
+            "path": "yt aesthe/Romantic Couple/Some_moments_become_immortal_even_after_turning_to_dust..._j_578571883433296153_720x1280.mp4",
+            "full_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\input\\yt aesthe\\Romantic Couple\\Some_moments_become_immortal_even_after_turning_to_dust..._j_578571883433296153_720x1280.mp4",
+            "folder": "yt aesthe/Romantic Couple",
+            "duration": 25.87,
+            "size_mb": 4.01,
+            "preview_url": "/background-videos/yt aesthe/Romantic Couple/Some_moments_become_immortal_even_after_turning_to_dust..._j_578571883433296153_720x1280.mp4"
+          }
+        ],
+        "used_headers": [
+          {
+            "type": "intro_header",
+            "type_label": "Intro POV Header",
+            "text": "Kaisi {Lag Rahi Hoon}yellow?",
+            "raw_text": "Kaisi {Lag Rahi Hoon}yellow?",
+            "file": "intro_headers.txt",
+            "is_custom": true
+          }
+        ],
+        "source_video_url": "/videos/bulk/batch_1790625620555_1x3sm/003_https_www_youtube_com_shorts_8acu_raw.mp4",
+        "source_video_path": "C:\\Users\\rudra\\PycharmProjects\\New lyrics 2\\videos\\output\\bulk\\batch_1790625620555_1x3sm\\003_https_www_youtube_com_shorts_8acu_raw.mp4",
+        "source_video_filename": "003_https_www_youtube_com_shorts_8acu_raw.mp4",
+        "source_video_duration": 15,
+        "rewritten_title": "Khuda Bhi — Mohit Chauhan | Aesthetic Lyrics 🤍",
+        "rewritten_caption": "Tere Aage Fike Fike Saare Singhar Hai. Some melodies just find a way to resonate with the quiet corners of our hearts. Put on your earphones and feel every beat of this beautiful composition. Tag someone who brings peace to your soul 🤍\n\nSong: Khuda Bhi\nSinger: Mohit Chauhan \nMovie: Ek Paheli Leela\nStarring: Sunny Leone & Jay Bhanushali \nMusic Director: Tony Kakkar \nLyricist: Manoj Muntashir \n\n🎶 Enjoy this beautifully edited song clip with on-screen lyrics!\nFeel the vibe, sing along, and don’t forget to like, share, and subscribe for more such amazing edits! ❤️\n\n👉 Subscribe for more\n👉 Follow for daily updates and new short edits!\n\n📌 Disclaimer:\nAll credit goes to the original artist and music creators. This video is only for entertainment and promotional purposes. No copyright infringement intended.\n\n📌 Disclaimer:\nAll credit goes to the original artist and music creators. This video is only for entertainment and promotional purposes. No copyright infringement intended.\n\n#shorts #lyrics #lovesong #aesthetic #khudabhi #mohitchauhan #tonykakkar #ekpahelileela #manojmuntashir #AestheticLyrics #HindiLyrics #RomanticSong #BollywoodSongs #BollywoodLoveSong #LoveStatus #LyricsVideo #YTShorts #ViralShorts #TrendingShorts",
+        "caption": "Tere Aage Fike Fike Saare Singhar Hai. Some melodies just find a way to resonate with the quiet corners of our hearts. Put on your earphones and feel every beat of this beautiful composition. Tag someone who brings peace to your soul 🤍\n\nSong: Khuda Bhi\nSinger: Mohit Chauhan \nMovie: Ek Paheli Leela\nStarring: Sunny Leone & Jay Bhanushali \nMusic Director: Tony Kakkar \nLyricist: Manoj Muntashir \n\n🎶 Enjoy this beautifully edited song clip with on-screen lyrics!\nFeel the vibe, sing along, and don’t forget to like, share, and subscribe for more such amazing edits! ❤️\n\n👉 Subscribe for more\n👉 Follow for daily updates and new short edits!\n\n📌 Disclaimer:\nAll credit goes to the original artist and music creators. This video is only for entertainment and promotional purposes. No copyright infringement intended.\n\n📌 Disclaimer:\nAll credit goes to the original artist and music creators. This video is only for entertainment and promotional purposes. No copyright infringement intended.\n\n#shorts #lyrics #lovesong #aesthetic #khudabhi #mohitchauhan #tonykakkar #ekpahelileela #manojmuntashir #AestheticLyrics #HindiLyrics #RomanticSong #BollywoodSongs #BollywoodLoveSong #LoveStatus #LyricsVideo #YTShorts #ViralShorts #TrendingShorts",
+        "tags": [
+          "Khuda Bhi",
+          "Mohit Chauhan",
+          "Ek Paheli Leela",
+          "Tony Kakkar",
+          "Manoj Muntashir",
+          "Khuda Bhi Lyrics",
+          "Romantic Hindi Songs",
+          "Aesthetic Lyrics",
+          "Soulful Bollywood Songs",
+          "Love Status Video",
+          "Lyrics Video",
+          "Hindi Love Songs",
+          "Sad Romantic Songs",
+          "Mohit Chauhan Songs",
+          "Latest Lyrics Status"
+        ],
+        "song_name": "Khuda Bhi",
+        "detailed_cues": [
+          {
+            "timeSeconds": 0.167,
+            "endSeconds": 5.53,
+            "text": "Kaisi {Lag Rahi Hoon}yellow?",
+            "status": "uncertain",
+            "tier": 3,
+            "confidence": 0.484,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "aankhen hai ya afasaana jism ya kitaab hain",
+              "canonical_similarity": 0.338,
+              "composite_confidence": 0.484
+            }
+          },
+          {
+            "timeSeconds": 5.533,
+            "endSeconds": 8.13,
+            "text": "Tere aage fike-fike...",
+            "status": "visible_text_accepted",
+            "tier": 2,
+            "confidence": 0.695,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "tere aage fike-fike saare singaar hain",
+              "canonical_similarity": 0.633,
+              "composite_confidence": 0.695
+            }
+          },
+          {
+            "timeSeconds": 8.133,
+            "endSeconds": 10.57,
+            "text": "Saare singaar hain 🤍",
+            "status": "visible_text_accepted",
+            "tier": 2,
+            "confidence": 0.686,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "tere aage fike-fike saare singaar hain",
+              "canonical_similarity": 0.621,
+              "composite_confidence": 0.686
+            }
+          },
+          {
+            "timeSeconds": 10.567,
+            "endSeconds": 13.2,
+            "text": "Main to kya farishte bhi >>",
+            "status": "canonical_verified",
+            "tier": 1,
+            "confidence": 0.753,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "main to kya farishte bhee tujpe nisaar hain",
+              "canonical_similarity": 0.714,
+              "composite_confidence": 0.753
+            }
+          },
+          {
+            "timeSeconds": 13.2,
+            "endSeconds": 15.2,
+            "text": "Tujpe nisaar hain...",
+            "status": "visible_text_accepted",
+            "tier": 2,
+            "confidence": 0.629,
+            "contains_unsupported_indic": false,
+            "indic_tokens": [],
+            "provenance": {
+              "canonical_match": "main to kya farishte bhee tujpe nisaar hain",
+              "canonical_similarity": 0.54,
+              "composite_confidence": 0.629
+            }
+          }
+        ],
+        "intro_header": "Kaisi {Lag Rahi Hoon}yellow?",
+        "metrics": {
+          "wall_time_seconds": 141.97,
+          "render_time_seconds": 11.62,
+          "python_cpu_time_seconds": 48.11,
+          "python_cpu_utilization_percent": 33.9,
+          "peak_memory_mb": 2548.52,
+          "output_size_mb": 3.67,
+          "video_duration_seconds": 15.38,
+          "render_speed_x": 0.11,
+          "render_speed_x_excluding_download": 1.32,
+          "encoder": "h264_nvenc",
+          "resolution": "540x960",
+          "fps": 24
+        }
+      }
+    }
+  ]
+}
