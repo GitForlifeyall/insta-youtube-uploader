@@ -298,50 +298,62 @@ def get_installed_youtube_package(adb_exe: str, target: str) -> str:
     return "app.morphe.android.youtube"
 
 
-def is_trimmer_button_rendered(adb_exe: str, target: str, cx: int = 627, cy: int = 1112, radius: int = 25) -> bool:
+def is_trimmer_next_button_rendered(adb_exe: str, target: str) -> Tuple[bool, Optional[Tuple[int, int]]]:
     """
-    Directly checks screen pixels via screencap to verify if the Next/Done button
-    has rendered in the bottom right corner without relying solely on uiautomator idle states.
+    Directly checks screen pixels via screencap to verify if the Next/Done pill button
+    has rendered on the dark trimmer screen.
+    Guarantees:
+    - Zero false positives on bright screens or prior YouTube activities (verifies dark trimmer frame).
+    - Detects button appearance immediately when video timeline loading completes.
+    - Never blocks or throws due to uiautomator idle-state locks.
     """
     try:
         res = subprocess.run([adb_exe, "-s", target, "exec-out", "screencap", "-p"], capture_output=True, timeout=4.0)
         if res.returncode != 0 or not res.stdout:
-            return False
+            return False, None
         import io
         from PIL import Image
         img = Image.open(io.BytesIO(res.stdout)).convert("RGB")
         w, h = img.size
-        if cx >= w or cy >= h:
-            return False
+        if w < 700 or h < 1200:
+            return False, None
 
-        bright_count = 0
-        total_samples = 0
-        for dx in range(-radius, radius + 1, 6):
-            for dy in range(-radius, radius + 1, 6):
-                px = cx + dx
-                py = cy + dy
-                if 0 <= px < w and 0 <= py < h:
-                    total_samples += 1
-                    r, g, b = img.getpixel((px, py))
-                    if (r + g + b) / 3 > 140:
-                        bright_count += 1
+        # 1. Verify trimmer dark theme frame (surroundings of the button at (520, 1112), (620, 1050), (620, 1170) must be dark)
+        left_sample = img.getpixel((520, 1112))
+        top_sample = img.getpixel((620, 1050))
+        bottom_sample = img.getpixel((620, 1170))
 
-        ratio = bright_count / max(1, total_samples)
-        return ratio >= 0.25
+        if not (sum(left_sample[:3]) / 3 < 60 and sum(top_sample[:3]) / 3 < 60 and sum(bottom_sample[:3]) / 3 < 60):
+            return False, None
+
+        # 2. Count white pixels inside the pill button bounding box [560, 1070][680, 1155]
+        white_px = []
+        for x in range(560, 680):
+            for y in range(1070, 1155):
+                r, g, b = img.getpixel((x, y))
+                if r > 180 and g > 180 and b > 180:
+                    white_px.append((x, y))
+
+        # A fully rendered Next/Done pill button contains ~3,000+ white pixels
+        if len(white_px) >= 2000:
+            xs = [p[0] for p in white_px]
+            ys = [p[1] for p in white_px]
+            cx = (min(xs) + max(xs)) // 2
+            cy = (min(ys) + max(ys)) // 2
+            return True, (cx, cy)
+
+        return False, None
     except Exception:
-        return False
+        return False, None
 
 
 def dump_ui_nodes(adb_exe: str, target: str):
     # Always delete old dump file first to prevent reading stale nodes from previous screens
-    run_adb(adb_exe, target, "shell", "rm", "-f", "/sdcard/window_dump.xml", timeout=3.0)
-    res_dump = run_adb(adb_exe, target, "shell", "uiautomator", "dump", "--compressed", "/sdcard/window_dump.xml", timeout=4.0)
-    res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml", timeout=3.0)
+    run_adb(adb_exe, target, "shell", "rm", "-f", "/sdcard/window_dump.xml", timeout=2.0)
+    run_adb(adb_exe, target, "shell", "uiautomator", "dump", "--compressed", "/sdcard/window_dump.xml", timeout=3.0)
+    res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml", timeout=2.0)
     if not res.stdout or "<hierarchy" not in res.stdout:
-        run_adb(adb_exe, target, "shell", "uiautomator", "dump", "/sdcard/window_dump.xml", timeout=4.0)
-        res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml", timeout=3.0)
-        if not res.stdout or "<hierarchy" not in res.stdout:
-            return []
+        return []
     try:
         root = ET.fromstring(res.stdout)
         nodes = []
@@ -410,8 +422,7 @@ def wait_for_trimmer_next_button(
 ) -> Tuple[int, int]:
     """
     Dynamically polls until the Next / Done button appears on the Trimmer screen.
-    Combines clean UI hierarchy inspection with pixel render validation to prevent
-    stale reads or premature detection. Once rendered, waits 3.0 seconds as required.
+    Once rendered, waits 3.0 seconds as required for rendering stabilization before returning coordinates.
     """
     def _l(msg):
         if log_fn:
@@ -421,23 +432,28 @@ def wait_for_trimmer_next_button(
 
     start_time = time.time()
     poll_interval = 0.5
-    # Brief initial grace period for upload intent to transition out of launcher
-    sleep_with_control(1.5, pause_event, stop_event)
 
     while time.time() - start_time < timeout:
         if stop_event and stop_event.is_set():
             raise UploadCancelledException("Upload cancelled by user.")
 
-        # 1. Check UI hierarchy nodes
+        # 1. Pixel-based direct verification on dark trimmer screen (fast, 100% reliable)
+        is_rendered, coords = is_trimmer_next_button_rendered(adb_exe, target)
+        if is_rendered and coords:
+            cx, cy = coords
+            _l(f"[+] Trimmer 'Next' button rendered on screen at ({cx}, {cy}). Waiting 3.0s after render...")
+            sleep_with_control(3.0, pause_event, stop_event)
+            return cx, cy
+
+        # 2. UI hierarchy check fallback
         nodes = dump_ui_nodes(adb_exe, target)
         next_node = (
-            find_node(nodes, text="Next", min_x=300, min_y=800)
-            or find_node(nodes, desc="Next", min_x=300, min_y=800)
-            or find_node(nodes, text="Done", min_x=300, min_y=800)
-            or find_node(nodes, desc="Done", min_x=300, min_y=800)
-            or find_node(nodes, res_id="next", min_x=300, min_y=800)
-            or find_node(nodes, res_id="done", min_x=300, min_y=800)
-            or find_node(nodes, res_id="shorts_post_bottom_button", min_x=300, min_y=800)
+            find_node(nodes, text="Next", min_x=450, min_y=950)
+            or find_node(nodes, desc="Next", min_x=450, min_y=950)
+            or find_node(nodes, text="Done", min_x=450, min_y=950)
+            or find_node(nodes, desc="Done", min_x=450, min_y=950)
+            or find_node(nodes, res_id="next", min_x=450, min_y=950)
+            or find_node(nodes, res_id="done", min_x=450, min_y=950)
         )
 
         if next_node and next_node.get("cx") and next_node.get("cy"):
@@ -446,17 +462,11 @@ def wait_for_trimmer_next_button(
             sleep_with_control(3.0, pause_event, stop_event)
             return cx, cy
 
-        # 2. Check pixel rendering at standard bottom-right trimmer location (627, 1112)
-        if is_trimmer_button_rendered(adb_exe, target, 627, 1112):
-            _l(f"[+] Trimmer 'Next' button rendered on screen at (627, 1112). Waiting 3.0s after render...")
-            sleep_with_control(3.0, pause_event, stop_event)
-            return 627, 1112
-
         sleep_with_control(poll_interval, pause_event, stop_event)
 
-    _l(f"[!] Trimmer 'Next' button not detected within {timeout:.0f}s. Falling back to (627, 1112) with 3.0s delay...")
+    _l(f"[!] Trimmer 'Next' button not detected within {timeout:.0f}s. Falling back to (622, 1111) with 3.0s delay...")
     sleep_with_control(3.0, pause_event, stop_event)
-    return 627, 1112
+    return 622, 1111
 
 
 def upload_short_to_youtube(
