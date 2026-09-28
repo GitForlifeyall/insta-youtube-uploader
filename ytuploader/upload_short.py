@@ -367,15 +367,20 @@ def input_fast_text(adb_exe: str, target: str, text: str):
 def upload_short_to_youtube(
     adb_exe: str,
     target: str,
-    video_path: str,
-    title: str,
+    video_path: Optional[str] = None,
+    title: str = "",
     sound: Optional[str] = None,
     timestamp: Optional[str] = None,
     media_name: Optional[str] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     pause_event: Optional[threading.Event] = None,
-    stop_event: Optional[threading.Event] = None
+    stop_event: Optional[threading.Event] = None,
+    **kwargs
 ):
+    actual_video_path = video_path or kwargs.get("video_file")
+    if not actual_video_path:
+        raise ValueError("Video path/file must be provided to upload_short_to_youtube")
+    video_path = actual_video_path
     def _l(msg):
         if should_ignore_log(msg):
             return

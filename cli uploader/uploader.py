@@ -82,9 +82,11 @@ def load_brand_metadata(brand_folder: Path, log_fn: Optional[Any] = None) -> Dic
     if brand_folder.exists() and brand_folder.is_dir():
         json_files.extend(sorted(brand_folder.glob("*.json")))
 
-    root_links = REPO_ROOT / "links.json"
-    if root_links.exists() and root_links not in json_files:
-        json_files.append(root_links)
+    # Fallback to root links.json only if brand folder has no local JSON metadata files
+    if not json_files:
+        root_links = REPO_ROOT / "links.json"
+        if root_links.exists():
+            json_files.append(root_links)
 
     if not json_files:
         _l("[*] No JSON metadata files found in brand folder or workspace root.")
@@ -584,7 +586,7 @@ def upload_short_pipeline(
                 upload_short.upload_short_to_youtube(
                     adb_exe=adb_exe,
                     target=active_target,
-                    video_file=str(video),
+                    video_path=str(video),
                     title=details["title"],
                     sound=details["song_name"],
                     timestamp=details["timestamp"],
