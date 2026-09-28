@@ -293,17 +293,24 @@ def extract_video_metadata(
 
     # Format tags
     hashtags = []
+    clean_tags = []
     if isinstance(raw_tags, list):
         for t in raw_tags:
             if isinstance(t, str) and t.strip():
                 ht = format_tag_as_hashtag(t.strip())
                 if ht and ht.lower() not in [h.lower() for h in hashtags]:
                     hashtags.append(ht)
+                ct = t.strip().lstrip("#").strip()
+                if ct and ct.lower() not in [c.lower() for c in clean_tags]:
+                    clean_tags.append(ct)
     elif isinstance(raw_tags, str):
         for t in raw_tags.split():
             ht = format_tag_as_hashtag(t)
             if ht and ht.lower() not in [h.lower() for h in hashtags]:
                 hashtags.append(ht)
+            ct = t.strip().lstrip("#").strip()
+            if ct and ct.lower() not in [c.lower() for c in clean_tags]:
+                clean_tags.append(ct)
 
     # Always ensure #shorts is available
     if "#shorts" not in [h.lower() for h in hashtags]:
@@ -352,7 +359,8 @@ def extract_video_metadata(
         "raw_song_name": raw_song,
         "artist": artist,
         "timestamp": timestamp_str,
-        "hashtags": hashtags
+        "hashtags": hashtags,
+        "tags": clean_tags
     }
 
 
@@ -596,6 +604,8 @@ def upload_short_pipeline(
                 _log(f"    Sound Track: {details['song_name']} (Timestamp: {details['timestamp'] or 'Default'})")
             if details["artist"]:
                 _log(f"    Artist:      {details['artist']}")
+            if details.get("tags"):
+                _log(f"    Tags ({len(details['tags'])}): {', '.join(details['tags'][:6])}{'...' if len(details['tags']) > 6 else ''}")
 
             start_t = time.time()
             success = False
@@ -609,6 +619,7 @@ def upload_short_pipeline(
                     title=details["title"],
                     sound=details["song_name"],
                     timestamp=details["timestamp"],
+                    tags=details.get("tags"),
                     media_name=media_name,
                     log_fn=_log
                 )

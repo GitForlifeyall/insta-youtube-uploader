@@ -18,7 +18,7 @@ import re
 import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional, Callable, Tuple
+from typing import Optional, Callable, Tuple, List, Any
 
 DEFAULT_TOOLS_DIR = Path(r"C:\Users\Shahid\tools\scrcpy")
 DEFAULT_ADB = DEFAULT_TOOLS_DIR / "adb.exe"
@@ -497,6 +497,7 @@ def upload_short_to_youtube(
     title: str = "",
     sound: Optional[str] = None,
     timestamp: Optional[str] = None,
+    tags: Optional[List[str]] = None,
     media_name: Optional[str] = None,
     log_fn: Optional[Callable[[str], None]] = None,
     pause_event: Optional[threading.Event] = None,
@@ -507,6 +508,7 @@ def upload_short_to_youtube(
     if not actual_video_path:
         raise ValueError("Video path/file must be provided to upload_short_to_youtube")
     video_path = actual_video_path
+    tags = tags or kwargs.get("tags")
     def _l(msg):
         if should_ignore_log(msg):
             return
@@ -748,6 +750,83 @@ def upload_short_to_youtube(
     _l(f"[+] Tapped 'Show more' at ({tap_x}, {tap_y}).")
     sleep_with_control(1.5, pause_event, stop_event)
 
+    # Scroll down to the bottom of the Details screen
+    _l("[*] Scrolling down to bottom of Details screen...")
+    run_adb(adb_exe, target, "shell", "input", "swipe", "360", "900", "360", "200", "300")
+    sleep_with_control(1.5, pause_event, stop_event)
+
+    # Locate and open "Attributes: AI use, Tags" section
+    nodes = dump_ui_nodes(adb_exe, target)
+    attr_node = (
+        find_node(nodes, text="Attributes")
+        or find_node(nodes, desc="Attributes")
+        or find_node(nodes, text="Tags")
+        or find_node(nodes, desc="Tags")
+        or find_node(nodes, text="AI use")
+        or find_node(nodes, desc="AI use")
+    )
+    if attr_node and attr_node.get("cx") and attr_node.get("cy"):
+        attr_x, attr_y = attr_node["cx"], attr_node["cy"]
+    else:
+        # Fallback using "Show less" button position (Attributes row is directly above it)
+        show_less_node = find_node(nodes, text="Show less") or find_node(nodes, desc="Show less")
+        if show_less_node and show_less_node.get("cy"):
+            attr_x, attr_y = 360, max(500, show_less_node["cy"] - 100)
+        else:
+            attr_x, attr_y = 360, 715
+
+    _l(f"[*] Opening 'Attributes: AI use, Tags' (tapping at ({attr_x}, {attr_y}))...")
+    run_adb(adb_exe, target, "shell", "input", "tap", str(attr_x), str(attr_y))
+    sleep_with_control(1.8, pause_event, stop_event)
+
+    # Enter tags into Add tags if provided
+    if tags:
+        _l(f"[*] Entering {len(tags)} tag(s) into 'Add tags'...")
+        nodes = dump_ui_nodes(adb_exe, target)
+        add_tags_node = (
+            find_node(nodes, text="Add tags")
+            or find_node(nodes, desc="Add tags")
+        )
+        if add_tags_node and add_tags_node.get("cx") and add_tags_node.get("cy"):
+            tag_tap_x, tag_tap_y = add_tags_node["cx"], add_tags_node["cy"]
+        else:
+            tag_tap_x, tag_tap_y = 360, 308
+
+        run_adb(adb_exe, target, "shell", "input", "tap", str(tag_tap_x), str(tag_tap_y))
+        sleep_with_control(1.0, pause_event, stop_event)
+
+        for tag in tags:
+            if stop_event and stop_event.is_set():
+                raise UploadCancelledException("Upload cancelled by user.")
+            clean_tag = str(tag).strip().lstrip("#").strip()
+            if not clean_tag:
+                continue
+            _l(f"    + Tag: '{clean_tag}'")
+            input_fast_text(adb_exe, target, clean_tag)
+            run_adb(adb_exe, target, "shell", "input", "keyevent", "66")  # Enter key commits tag chip
+            sleep_with_control(0.5, pause_event, stop_event)
+
+        # Dismiss keyboard after typing tags
+        _l("[*] Dismissing keyboard...")
+        run_adb(adb_exe, target, "shell", "input", "keyevent", "4")
+        sleep_with_control(0.8, pause_event, stop_event)
+
+    # Return from Attributes screen back to Details screen
+    _l("[*] Returning to Details screen (tapping Back)...")
+    nodes = dump_ui_nodes(adb_exe, target)
+    back_node = (
+        find_node(nodes, desc="Back")
+        or find_node(nodes, text="Back")
+        or find_node(nodes, desc="Navigate up")
+    )
+    if back_node and back_node.get("cx") and back_node.get("cy"):
+        back_x, back_y = back_node["cx"], back_node["cy"]
+    else:
+        back_x, back_y = 64, 96
+
+    run_adb(adb_exe, target, "shell", "input", "tap", str(back_x), str(back_y))
+    sleep_with_control(1.5, pause_event, stop_event)
+
     # Tap Upload Short / Upload button
     _l("[+] Tapping Upload button...")
     nodes = dump_ui_nodes(adb_exe, target)
@@ -831,6 +910,7 @@ def main():
     parser.add_argument("--title", "-T", default=None, help="Title for the YouTube Short")
     parser.add_argument("-n", "-m", "--name", "--media-name", dest="media_name", default=None, help="Custom filename to set for the video inside Android (e.g. -n xyz, -m xyz)")
     parser.add_argument("-c", "--clean", action="store_true", help="Clean all emulator media, reset MediaStore, clear YouTube upload drafts, and exit")
+    parser.add_argument("--tags", nargs="*", default=None, help="List of tags to enter into Attributes -> Add tags")
     parser.add_argument("--adb", default=None, help="Custom path to adb executable")
     parser.add_argument("--scrcpy", default=None, help="Custom path to scrcpy executable")
 
@@ -914,7 +994,7 @@ def main():
     watcher_thread.start()
 
     try:
-        upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=sound_arg, timestamp=args.timestamp, media_name=args.media_name, pause_event=pause_event)
+        upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=sound_arg, timestamp=args.timestamp, tags=args.tags, media_name=args.media_name, pause_event=pause_event)
         print(f"\n[SUCCESS] YouTube Short '{short_title}' uploaded successfully to {display_name}!", flush=True)
     finally:
         stop_watcher.set()
