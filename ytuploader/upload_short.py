@@ -166,7 +166,8 @@ def launch_scrcpy(scrcpy_exe: str, target: str, log_fn: Optional[Callable[[str],
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         )
-        _l("[+] Screen viewer opened successfully!")
+        _l("[+] Screen viewer opened successfully! Waiting 3.5s for display window to render...")
+        time.sleep(3.5)
     except Exception as e:
         _l(f"[!] Could not launch scrcpy: {e}")
 
