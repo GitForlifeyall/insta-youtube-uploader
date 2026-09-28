@@ -490,6 +490,110 @@ def wait_for_trimmer_next_button(
     return 622, 1111
 
 
+def resolve_default_tags(video_path: Optional[str] = None, title: str = "") -> List[str]:
+    """
+    Automatically discovers and resolves tags by default:
+    1. From local JSON manifest files (batch_manifest.json, metadata.json, or <video_stem>.json)
+       located in the video's directory, brand folders, or parent directories.
+    2. From hashtags in the video title.
+    3. From clean keywords extracted from the video title.
+    """
+    tags: List[str] = []
+
+    def _add_tag(val: Any):
+        if not val:
+            return
+        t = str(val).strip().lstrip("#").strip()
+        if t and t.lower() not in [x.lower() for x in tags] and t.lower() != "shorts":
+            tags.append(t)
+
+    # 1. Check for adjacent JSON manifests or metadata files
+    if video_path:
+        vp = Path(video_path)
+        search_dirs = [vp.parent]
+        if vp.parent.parent.exists():
+            search_dirs.append(vp.parent.parent)
+
+        stem_lower = vp.stem.lower()
+        name_lower = vp.name.lower()
+
+        for d in search_dirs:
+            for json_candidate in (d / f"{vp.stem}.json", d / "batch_manifest.json", d / "manifest.json", d / "metadata.json"):
+                if json_candidate.exists():
+                    try:
+                        import json
+                        with open(json_candidate, "r", encoding="utf-8", errors="ignore") as f:
+                            data = json.load(f)
+                        raw_items = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+                        if isinstance(data, dict):
+                            for key in ("items", "videos", "posts", "manifest", "batch"):
+                                if key in data and isinstance(data[key], list):
+                                    raw_items.extend(data[key])
+
+                        for item in raw_items:
+                            if not isinstance(item, dict):
+                                continue
+                            item_match = False
+                            meta_sub = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+
+                            for source_dict in (item, meta_sub):
+                                for fn_key in ("output_filename", "video_filename", "video_path", "filename", "file", "name", "stem", "source_video_filename", "output_path"):
+                                    if fn_key in source_dict and source_dict[fn_key]:
+                                        val = Path(str(source_dict[fn_key])).name.lower()
+                                        if val == name_lower or val == stem_lower or stem_lower in val or val in stem_lower:
+                                            item_match = True
+                                            break
+                                if item_match:
+                                    break
+
+                            if not item_match and "item_index" in item:
+                                m_idx = re.match(r"^0*(\d+)", stem_lower)
+                                if m_idx:
+                                    try:
+                                        if int(m_idx.group(1)) == int(item["item_index"]):
+                                            item_match = True
+                                    except Exception:
+                                        pass
+
+                            if item_match or len(raw_items) == 1:
+                                item_tags = (
+                                    item.get("tags")
+                                    or meta_sub.get("tags")
+                                    or item.get("hashtags")
+                                    or meta_sub.get("hashtags")
+                                    or []
+                                )
+                                if isinstance(item_tags, list):
+                                    for it in item_tags:
+                                        _add_tag(it)
+                                elif isinstance(item_tags, str):
+                                    for it in item_tags.split():
+                                        _add_tag(it)
+                                if tags:
+                                    break
+                    except Exception:
+                        pass
+                if tags:
+                    break
+            if tags:
+                break
+
+    # 2. Extract hashtags from title
+    if title:
+        hashtags = re.findall(r"#([a-zA-Z0-9_\u0600-\u06FF]+)", title)
+        for ht in hashtags:
+            _add_tag(ht)
+
+    # 3. If still empty, derive a default tag from title
+    if not tags and title:
+        clean_title = re.sub(r"#\S+", "", title).strip()
+        clean_title = re.sub(r"[^\w\s-]", "", clean_title).strip()
+        if clean_title:
+            _add_tag(clean_title[:35])
+
+    return tags
+
+
 def upload_short_to_youtube(
     adb_exe: str,
     target: str,
@@ -509,6 +613,8 @@ def upload_short_to_youtube(
         raise ValueError("Video path/file must be provided to upload_short_to_youtube")
     video_path = actual_video_path
     tags = tags or kwargs.get("tags")
+    if not tags:
+        tags = resolve_default_tags(video_path=video_path, title=title)
     def _l(msg):
         if should_ignore_log(msg):
             return
@@ -910,7 +1016,6 @@ def main():
     parser.add_argument("--title", "-T", default=None, help="Title for the YouTube Short")
     parser.add_argument("-n", "-m", "--name", "--media-name", dest="media_name", default=None, help="Custom filename to set for the video inside Android (e.g. -n xyz, -m xyz)")
     parser.add_argument("-c", "--clean", action="store_true", help="Clean all emulator media, reset MediaStore, clear YouTube upload drafts, and exit")
-    parser.add_argument("--tags", nargs="*", default=None, help="List of tags to enter into Attributes -> Add tags")
     parser.add_argument("--adb", default=None, help="Custom path to adb executable")
     parser.add_argument("--scrcpy", default=None, help="Custom path to scrcpy executable")
 
@@ -994,7 +1099,7 @@ def main():
     watcher_thread.start()
 
     try:
-        upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=sound_arg, timestamp=args.timestamp, tags=args.tags, media_name=args.media_name, pause_event=pause_event)
+        upload_short_to_youtube(adb_exe, target, video_file, short_title, sound=sound_arg, timestamp=args.timestamp, media_name=args.media_name, pause_event=pause_event)
         print(f"\n[SUCCESS] YouTube Short '{short_title}' uploaded successfully to {display_name}!", flush=True)
     finally:
         stop_watcher.set()
