@@ -406,9 +406,30 @@ def parse_timestamp_seconds(ts_str: str) -> float:
 
 
 def input_fast_text(adb_exe: str, target: str, text: str):
-    """Enters text with spaces in one single ADB command."""
-    safe_text = text.replace(" ", "%s")
-    safe_text = re.sub(r'([&|;$><`"\'\\])', r'\\\1', safe_text)
+    """
+    Enters text reliably in Android via ADB input text.
+    Normalizes typographic characters (em-dashes, en-dashes, typographic quotes),
+    filters unmappable characters (like emojis) that cause Android's
+    KeyCharacterMap to throw NullPointerException, and properly escapes shell metacharacters and hashtags.
+    """
+    clean_text = (
+        str(text)
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+        .replace("…", "...")
+    )
+    clean_text = "".join(c for c in clean_text if 32 <= ord(c) <= 126)
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+
+    if not clean_text:
+        return
+
+    safe_text = clean_text.replace(" ", "%s")
+    safe_text = re.sub(r'([&|;$><`"\'\\#])', r'\\\1', safe_text)
     run_adb(adb_exe, target, "shell", "input", "text", safe_text)
 
 
@@ -699,9 +720,9 @@ def upload_short_to_youtube(
         run_adb(adb_exe, target, "shell", "input", "tap", str(title_node["cx"]), str(title_node["cy"]))
     else:
         run_adb(adb_exe, target, "shell", "input", "tap", "450", "170")
-    sleep_with_control(1.2, pause_event, stop_event)
+    sleep_with_control(1.5, pause_event, stop_event)
     input_fast_text(adb_exe, target, title)
-    sleep_with_control(1.2, pause_event, stop_event)
+    sleep_with_control(1.8, pause_event, stop_event)
 
     # Dismiss keyboard
     _l("[*] Dismissing keyboard...")
