@@ -298,12 +298,48 @@ def get_installed_youtube_package(adb_exe: str, target: str) -> str:
     return "app.morphe.android.youtube"
 
 
+def is_trimmer_button_rendered(adb_exe: str, target: str, cx: int = 627, cy: int = 1112, radius: int = 25) -> bool:
+    """
+    Directly checks screen pixels via screencap to verify if the Next/Done button
+    has rendered in the bottom right corner without relying solely on uiautomator idle states.
+    """
+    try:
+        res = subprocess.run([adb_exe, "-s", target, "exec-out", "screencap", "-p"], capture_output=True, timeout=4.0)
+        if res.returncode != 0 or not res.stdout:
+            return False
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(res.stdout)).convert("RGB")
+        w, h = img.size
+        if cx >= w or cy >= h:
+            return False
+
+        bright_count = 0
+        total_samples = 0
+        for dx in range(-radius, radius + 1, 6):
+            for dy in range(-radius, radius + 1, 6):
+                px = cx + dx
+                py = cy + dy
+                if 0 <= px < w and 0 <= py < h:
+                    total_samples += 1
+                    r, g, b = img.getpixel((px, py))
+                    if (r + g + b) / 3 > 140:
+                        bright_count += 1
+
+        ratio = bright_count / max(1, total_samples)
+        return ratio >= 0.25
+    except Exception:
+        return False
+
+
 def dump_ui_nodes(adb_exe: str, target: str):
-    run_adb(adb_exe, target, "shell", "uiautomator", "dump", "/sdcard/window_dump.xml")
-    res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml")
+    # Always delete old dump file first to prevent reading stale nodes from previous screens
+    run_adb(adb_exe, target, "shell", "rm", "-f", "/sdcard/window_dump.xml", timeout=3.0)
+    res_dump = run_adb(adb_exe, target, "shell", "uiautomator", "dump", "--compressed", "/sdcard/window_dump.xml", timeout=4.0)
+    res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml", timeout=3.0)
     if not res.stdout or "<hierarchy" not in res.stdout:
-        run_adb(adb_exe, target, "shell", "uiautomator", "dump", "--compressed", "/sdcard/window_dump.xml")
-        res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml")
+        run_adb(adb_exe, target, "shell", "uiautomator", "dump", "/sdcard/window_dump.xml", timeout=4.0)
+        res = run_adb(adb_exe, target, "shell", "cat", "/sdcard/window_dump.xml", timeout=3.0)
         if not res.stdout or "<hierarchy" not in res.stdout:
             return []
     try:
@@ -373,8 +409,9 @@ def wait_for_trimmer_next_button(
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Tuple[int, int]:
     """
-    Dynamically polls UI nodes until the Next / Done button appears on the Trimmer screen.
-    Once rendered, waits 3.0 seconds as required for rendering stabilization before returning coordinates.
+    Dynamically polls until the Next / Done button appears on the Trimmer screen.
+    Combines clean UI hierarchy inspection with pixel render validation to prevent
+    stale reads or premature detection. Once rendered, waits 3.0 seconds as required.
     """
     def _l(msg):
         if log_fn:
@@ -383,13 +420,16 @@ def wait_for_trimmer_next_button(
             print(msg, flush=True)
 
     start_time = time.time()
-    poll_interval = 0.6
+    poll_interval = 0.5
+    # Brief initial grace period for upload intent to transition out of launcher
+    sleep_with_control(1.5, pause_event, stop_event)
+
     while time.time() - start_time < timeout:
         if stop_event and stop_event.is_set():
             raise UploadCancelledException("Upload cancelled by user.")
 
+        # 1. Check UI hierarchy nodes
         nodes = dump_ui_nodes(adb_exe, target)
-        # Search for Next / Done node (preferring bottom-right area or matching text/desc/res_id)
         next_node = (
             find_node(nodes, text="Next", min_x=300, min_y=800)
             or find_node(nodes, desc="Next", min_x=300, min_y=800)
@@ -397,15 +437,20 @@ def wait_for_trimmer_next_button(
             or find_node(nodes, desc="Done", min_x=300, min_y=800)
             or find_node(nodes, res_id="next", min_x=300, min_y=800)
             or find_node(nodes, res_id="done", min_x=300, min_y=800)
-            or find_node(nodes, text="Next")
-            or find_node(nodes, desc="Next")
+            or find_node(nodes, res_id="shorts_post_bottom_button", min_x=300, min_y=800)
         )
 
         if next_node and next_node.get("cx") and next_node.get("cy"):
             cx, cy = next_node["cx"], next_node["cy"]
-            _l(f"[+] Trimmer 'Next' button detected on screen at ({cx}, {cy}). Waiting 3.0s after render...")
+            _l(f"[+] Trimmer 'Next' button rendered on screen at ({cx}, {cy}). Waiting 3.0s after render...")
             sleep_with_control(3.0, pause_event, stop_event)
             return cx, cy
+
+        # 2. Check pixel rendering at standard bottom-right trimmer location (627, 1112)
+        if is_trimmer_button_rendered(adb_exe, target, 627, 1112):
+            _l(f"[+] Trimmer 'Next' button rendered on screen at (627, 1112). Waiting 3.0s after render...")
+            sleep_with_control(3.0, pause_event, stop_event)
+            return 627, 1112
 
         sleep_with_control(poll_interval, pause_event, stop_event)
 
