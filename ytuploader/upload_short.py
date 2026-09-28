@@ -364,6 +364,56 @@ def input_fast_text(adb_exe: str, target: str, text: str):
     run_adb(adb_exe, target, "shell", "input", "text", safe_text)
 
 
+def wait_for_trimmer_next_button(
+    adb_exe: str,
+    target: str,
+    timeout: float = 30.0,
+    pause_event: Optional[threading.Event] = None,
+    stop_event: Optional[threading.Event] = None,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> Tuple[int, int]:
+    """
+    Dynamically polls UI nodes until the Next / Done button appears on the Trimmer screen.
+    Once rendered, waits 3.0 seconds as required for rendering stabilization before returning coordinates.
+    """
+    def _l(msg):
+        if log_fn:
+            log_fn(msg)
+        else:
+            print(msg, flush=True)
+
+    start_time = time.time()
+    poll_interval = 0.6
+    while time.time() - start_time < timeout:
+        if stop_event and stop_event.is_set():
+            raise UploadCancelledException("Upload cancelled by user.")
+
+        nodes = dump_ui_nodes(adb_exe, target)
+        # Search for Next / Done node (preferring bottom-right area or matching text/desc/res_id)
+        next_node = (
+            find_node(nodes, text="Next", min_x=300, min_y=800)
+            or find_node(nodes, desc="Next", min_x=300, min_y=800)
+            or find_node(nodes, text="Done", min_x=300, min_y=800)
+            or find_node(nodes, desc="Done", min_x=300, min_y=800)
+            or find_node(nodes, res_id="next", min_x=300, min_y=800)
+            or find_node(nodes, res_id="done", min_x=300, min_y=800)
+            or find_node(nodes, text="Next")
+            or find_node(nodes, desc="Next")
+        )
+
+        if next_node and next_node.get("cx") and next_node.get("cy"):
+            cx, cy = next_node["cx"], next_node["cy"]
+            _l(f"[+] Trimmer 'Next' button detected on screen at ({cx}, {cy}). Waiting 3.0s after render...")
+            sleep_with_control(3.0, pause_event, stop_event)
+            return cx, cy
+
+        sleep_with_control(poll_interval, pause_event, stop_event)
+
+    _l(f"[!] Trimmer 'Next' button not detected within {timeout:.0f}s. Falling back to (627, 1112) with 3.0s delay...")
+    sleep_with_control(3.0, pause_event, stop_event)
+    return 627, 1112
+
+
 def upload_short_to_youtube(
     adb_exe: str,
     target: str,
@@ -439,14 +489,17 @@ def upload_short_to_youtube(
         _l("[!] Elevating Shorts upload intent with root privileges...")
         run_adb(adb_exe, target, "shell", "su", "0", *upload_cmd)
 
-    # 15-second timer to let the video editor / trimmer load
-    _l("[*] Waiting 15 seconds for video editor / trimmer to load...")
-    sleep_with_control(15.0, pause_event, stop_event)
+    # Dynamic wait condition: polls for the Next/Done button on the trimmer screen
+    # and waits 3.0s after it renders before proceeding
+    _l("[*] Waiting dynamically for trimmer 'Next' button to appear...")
+    trimmer_x, trimmer_y = wait_for_trimmer_next_button(
+        adb_exe, target, timeout=30.0, pause_event=pause_event, stop_event=stop_event, log_fn=log_fn
+    )
 
-    # Click Next/Done on the Trimmer screen at bottom-right (627, 1112)
-    _l("[*] Advancing trimmer screen (tapping Next / Done at 627, 1112)...")
-    run_adb(adb_exe, target, "shell", "input", "tap", "627", "1112")
-    sleep_with_control(4.0, pause_event, stop_event)
+    # Click Next/Done on the Trimmer screen
+    _l(f"[*] Advancing trimmer screen (tapping Next / Done at {trimmer_x}, {trimmer_y})...")
+    run_adb(adb_exe, target, "shell", "input", "tap", str(trimmer_x), str(trimmer_y))
+    sleep_with_control(3.5, pause_event, stop_event)
 
     # Handle Sound if requested
     if sound:
