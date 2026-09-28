@@ -208,59 +208,78 @@ def extract_video_metadata(
     Extracts title with tags, caption, song search query with artist, and timestamps from metadata.
     """
     # 1. Song Name & Artist Name (combined for YouTube audio search)
-    raw_song = (
-        default_song
-        or meta.get("song_name")
-        or meta.get("track_name")
-        or meta.get("sound")
-        or meta.get("audio_name")
-        or meta.get("audio")
-    )
-    artist = (
-        meta.get("artist_name")
-        or meta.get("artist")
-        or meta.get("author")
-        or meta.get("singer")
-        or ""
-    ).strip()
+    raw_song = default_song
+    if not raw_song:
+        for sk in ("song_name", "track_name", "sound", "audio_name", "audio", "song", "track"):
+            if sk in meta and meta[sk] is not None and str(meta[sk]).strip():
+                raw_song = str(meta[sk]).strip()
+                break
 
-    # Build audio search query for YouTube music library
+    artist = ""
+    for ak in ("artist_name", "artist", "author", "singer", "artistName", "creator"):
+        if ak in meta and meta[ak] is not None and str(meta[ak]).strip():
+            artist = str(meta[ak]).strip()
+            break
+
+    # Build audio search query for YouTube music library: "{song_name} by {artist}"
     audio_search = raw_song
-    if raw_song and artist:
-        # If artist isn't already in song title, combine them
-        if artist.lower() not in raw_song.lower():
-            audio_search = f"{raw_song} {artist}".strip()
+    if raw_song:
+        if artist:
+            # If artist is not already preceded by "by", format as "{song_name} by {artist}"
+            if " by " not in raw_song.lower():
+                if artist.lower() in raw_song.lower():
+                    # e.g., "Song Artist" -> "Song by Artist"
+                    base_song = re.sub(re.escape(artist), "", raw_song, flags=re.IGNORECASE).strip(" -—_")
+                    if base_song:
+                        audio_search = f"{base_song} by {artist}".strip()
+                    else:
+                        audio_search = raw_song.strip()
+                else:
+                    audio_search = f"{raw_song} by {artist}".strip()
+            else:
+                audio_search = raw_song.strip()
         else:
             audio_search = raw_song.strip()
 
     # 2. Timestamp / Start Seconds
-    raw_ts = (
-        default_timestamp
-        or meta.get("start_seconds")
-        or meta.get("start_time")
-        or meta.get("timeSeconds")
-        or meta.get("audio_timestamp")
-        or meta.get("timestamp")
-        or meta.get("time")
-    )
+    raw_ts = default_timestamp
+    if raw_ts is None:
+        for k in (
+            "start_seconds", "start_time", "startTime", "start", "timeSeconds", "time_seconds",
+            "audio_timestamp", "audio_start", "song_start", "start_offset",
+            "timestamp", "time"
+        ):
+            if k in meta and meta[k] is not None and str(meta[k]).strip() != "":
+                raw_ts = meta[k]
+                break
+
+    if raw_ts is None:
+        # Check syncedLines or detailed_cues if available
+        for cue_key in ("syncedLines", "detailed_cues", "cues"):
+            cues = meta.get(cue_key)
+            if isinstance(cues, list) and len(cues) > 0:
+                for c in cues:
+                    if isinstance(c, dict):
+                        for ck in ("timestamp", "timeSeconds", "startSeconds", "start_time", "start"):
+                            if ck in c and c[ck] is not None and str(c[ck]).strip() != "":
+                                raw_ts = c[ck]
+                                break
+                    if raw_ts is not None:
+                        break
+            if raw_ts is not None:
+                break
+
     timestamp_str = None
     if raw_ts is not None:
         try:
-            # If numeric float or int (e.g. 15.7 or 0)
             if isinstance(raw_ts, (int, float)):
-                if float(raw_ts) > 0:
-                    sec_val = float(raw_ts)
-                    timestamp_str = f"{int(sec_val // 60)}:{int(sec_val % 60):02d}"
-                else:
-                    timestamp_str = "0"
+                sec_val = float(raw_ts)
+                timestamp_str = f"{int(sec_val // 60)}:{int(sec_val % 60):02d}"
             else:
                 str_ts = str(raw_ts).strip()
-                if str_ts.replace(".", "", 1).isdigit():
+                if re.match(r"^\d+(?:\.\d+)?$", str_ts):
                     sec_val = float(str_ts)
-                    if sec_val > 0:
-                        timestamp_str = f"{int(sec_val // 60)}:{int(sec_val % 60):02d}"
-                    else:
-                        timestamp_str = "0"
+                    timestamp_str = f"{int(sec_val // 60)}:{int(sec_val % 60):02d}"
                 else:
                     timestamp_str = str_ts
         except Exception:

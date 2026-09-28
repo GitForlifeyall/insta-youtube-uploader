@@ -556,7 +556,7 @@ def upload_short_to_youtube(
         _l("[+] Sound successfully attached to Short!")
 
         # Check if timestamp adjustment was requested via -t / --timestamp
-        if timestamp:
+        if timestamp is not None and str(timestamp).strip() != "":
             _l(f"[*] Adjusting audio starting timestamp ('{timestamp}')...")
             # Tap sound capsule in editor to open "Adjust sound" modal (top center)
             run_adb(adb_exe, target, "shell", "input", "tap", "360", "101")
