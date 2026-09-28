@@ -655,9 +655,13 @@ def resolve_target(account_arg: str) -> Tuple[str, str]:
             except Exception:
                 pass
 
-    if account_str.isdigit():
-        acc_num = int(account_str)
-        return f"127.0.0.1:{5800 + acc_num}", f"Account {account_str}"
+    # Extract digits from string (e.g. 'Account 01' -> 1 -> 5801, '02' -> 2 -> 5802, '91' -> 5891)
+    import re
+    digit_match = re.search(r"(\d+)", account_str)
+    if digit_match:
+        acc_num = int(digit_match.group(1))
+        port = 5800 + acc_num if acc_num < 1000 else acc_num
+        return f"127.0.0.1:{port}", f"Account {acc_num:02d}"
 
     return "127.0.0.1:5555", account_str
 

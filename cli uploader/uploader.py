@@ -357,11 +357,18 @@ def start_redroid_container(brand_account: str, ps_script: Path = REDROID_PS1, l
             errors="ignore",
             cwd=str(YTUPLOADER_DIR)
         )
-        for line in proc.stdout:
-            stripped = line.rstrip()
-            if stripped:
-                _l(f"    {stripped}")
-        proc.wait()
+        try:
+            stdout_text, _ = proc.communicate(timeout=180)
+            if stdout_text:
+                for line in stdout_text.splitlines():
+                    stripped = line.rstrip()
+                    if stripped:
+                        _l(f"    {stripped}")
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _l("[!] Container startup timed out after 180 seconds.")
+            return False
+
         return proc.returncode == 0
     except Exception as e:
         _l(f"[!] Failed to execute redroid.ps1 start: {e}")
@@ -389,11 +396,18 @@ def stop_redroid_container(brand_account: str, ps_script: Path = REDROID_PS1, lo
             errors="ignore",
             cwd=str(YTUPLOADER_DIR)
         )
-        for line in proc.stdout:
-            stripped = line.rstrip()
-            if stripped:
-                _l(f"    {stripped}")
-        proc.wait()
+        try:
+            stdout_text, _ = proc.communicate(timeout=60)
+            if stdout_text:
+                for line in stdout_text.splitlines():
+                    stripped = line.rstrip()
+                    if stripped:
+                        _l(f"    {stripped}")
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _l("[!] Container shutdown timed out after 60 seconds.")
+            return False
+
         return proc.returncode == 0
     except Exception as e:
         _l(f"[!] Failed to execute redroid.ps1 stop: {e}")

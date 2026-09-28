@@ -44,9 +44,13 @@ if ($Account -match '^\d+$') {
     $HostPort = 5800 + $AccountNum
     $ContainerName = "redroid-$Account"
     $VolumeName = "redroid-account-$Account-data"
+} elseif ($Account -match 'alpha|brand_01|brand-01|5555') {
+    $ContainerName = "redroid-brand-01"
+    $HostPort = 5555
+    $VolumeName = "redroid-brand-01-data"
 } else {
-    $cleanName = $Account -replace '^redroid-', ''
-    $ContainerName = if ($Account.StartsWith("redroid-")) { $Account } else { "redroid-$Account" }
+    $cleanName = ($Account -replace '^redroid-', '') -replace '\s+', '-'
+    $ContainerName = if ($Account.StartsWith("redroid-")) { $Account } else { "redroid-$cleanName" }
     $VolumeName = "$ContainerName-data"
     
     $brandsJsonPath = Join-Path $PSScriptRoot "..\redroid_manager\config\brands.json"
@@ -108,7 +112,9 @@ function Ensure-DockerRunning {
     try {
         $hasWslProc = Get-Process -Name "wsl" -ErrorAction SilentlyContinue
         if (-not $hasWslProc) {
-            Start-Process -FilePath "wsl.exe" -ArgumentList "-d Ubuntu -u root --exec sleep infinity" -WindowStyle Hidden
+            $keepLog = Join-Path $env:TEMP "wsl_keepalive.log"
+            $keepErr = Join-Path $env:TEMP "wsl_keepalive_err.log"
+            Start-Process -FilePath "wsl.exe" -ArgumentList "-d Ubuntu -u root --exec sleep infinity" -WindowStyle Hidden -RedirectStandardOutput $keepLog -RedirectStandardError $keepErr
         }
     } catch {}
 
