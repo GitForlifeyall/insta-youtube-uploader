@@ -32,10 +32,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import threading
+from typing import Optional, Dict, Any, List, Callable
+
 # Global State
 class UploadManager:
     def __init__(self):
-        self.active_process: Optional[asyncio.subprocess.Process] = None
+        self.active_process: Optional[subprocess.Popen] = None
         self.active_job_info: Optional[Dict[str, Any]] = None
         self.log_history: List[str] = []
         self.max_history: int = 5000
@@ -70,6 +73,43 @@ class UploadManager:
         for ws in dead_sockets:
             self.disconnect_ws(ws)
 
+
+def stream_process(cmd: List[str], prefix: str = "", on_exit: Optional[Callable[[int], Any]] = None, track_as_active: bool = False):
+    loop = asyncio.get_running_loop()
+
+    def _worker():
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="ignore",
+                cwd=str(BASE_DIR)
+            )
+            if track_as_active:
+                manager.active_process = proc
+
+            for line in iter(proc.stdout.readline, ''):
+                if line:
+                    formatted = f"[{prefix}] {line}" if prefix else line
+                    asyncio.run_coroutine_threadsafe(manager.broadcast_log(formatted), loop)
+
+            proc.wait()
+            code = proc.returncode
+            if on_exit:
+                asyncio.run_coroutine_threadsafe(on_exit(code), loop)
+        except Exception as e:
+            asyncio.run_coroutine_threadsafe(manager.broadcast_log(f"[ERROR] Process failed: {e}\n"), loop)
+            if on_exit:
+                asyncio.run_coroutine_threadsafe(on_exit(1), loop)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+
 manager = UploadManager()
 
 
@@ -79,12 +119,55 @@ def get_pause_flag_path(account: str) -> Path:
 
 def resolve_port(account: str) -> int:
     acc = account.strip().lower()
-    if "alpha" in acc or acc in ["brand_01", "brand-01", "01", "5555"]:
+    if "alpha" in acc or acc in ["brand_01", "brand-01", "5555"]:
         return 5555
     if acc.isdigit():
         num = int(acc)
         return 5800 + num if num < 5000 else num
     return 5555
+
+
+def resolve_account_alias(account: str) -> str:
+    acc = account.strip().lower()
+    if "alpha" in acc or acc in ["brand_01", "brand-01", "5555"]:
+        return "brand_01"
+    return account.strip()
+
+
+def get_adb_path() -> str:
+    candidates = [
+        shutil.which("adb"),
+        r"C:\Users\Shahid\tools\scrcpy\adb.exe",
+        r"C:\platform-tools\adb.exe",
+        str(Path.home() / "AppData" / "Local" / "Android" / "Sdk" / "platform-tools" / "adb.exe"),
+    ]
+    for c in candidates:
+        if c and Path(c).exists():
+            return str(c)
+    return "adb"
+
+
+def check_adb_device_status(port: int) -> str:
+    adb_bin = get_adb_path()
+    try:
+        res = subprocess.run(
+            [adb_bin, "devices"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=5.0
+        )
+        for line in res.stdout.splitlines():
+            line_str = line.strip()
+            if f":{port}" in line_str or (port == 5555 and ("5555" in line_str or "emulator-5554" in line_str)):
+                if "device" in line_str and "offline" not in line_str:
+                    return "online"
+                elif "offline" in line_str:
+                    return "offline"
+        return "offline"
+    except Exception as e:
+        return "offline"
 
 
 @app.get("/api/status")
@@ -93,24 +176,8 @@ async def get_system_status(account: str = "Brand Alpha"):
     target = f"127.0.0.1:{port}"
     pause_flag = get_pause_flag_path(account)
 
-    # Check ADB device status
-    adb_status = "offline"
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "adb", "devices",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, _ = await proc.communicate()
-        out_str = stdout.decode("utf-8", errors="ignore")
-        for line in out_str.splitlines():
-            if f":{port}" in line or (port == 5555 and "5555" in line):
-                if "device" in line and "offline" not in line:
-                    adb_status = "online"
-                elif "offline" in line:
-                    adb_status = "offline"
-    except Exception:
-        adb_status = "unknown"
+    # Check ADB device status synchronously in thread
+    adb_status = await asyncio.to_thread(check_adb_device_status, port)
 
     return {
         "account": account,
@@ -209,40 +276,30 @@ async def container_action(payload: Dict[str, Any]):
     if not ps_script.exists():
         raise HTTPException(status_code=500, detail="redroid.ps1 script not found")
 
-    cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(ps_script), action, account]
+    account_arg = resolve_account_alias(account)
+    cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(ps_script), action, account_arg]
 
-    async def run_ps_cmd():
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(BASE_DIR)
-        )
-        stdout, stderr = await proc.communicate()
-        out = stdout.decode("utf-8", errors="ignore")
-        err = stderr.decode("utf-8", errors="ignore")
-        if out:
-            for l in out.splitlines():
-                await manager.broadcast_log(f"[{action.upper()}] {l}\n")
-        if err:
-            for l in err.splitlines():
-                await manager.broadcast_log(f"[WARN] {l}\n")
+    async def _on_container_exit(code: int):
+        if code == 0:
+            await manager.broadcast_log(f"[+] Container action '{action}' finished successfully for {account}.\n")
+        else:
+            await manager.broadcast_log(f"[-] Container action '{action}' exited with code {code}.\n")
 
-    asyncio.create_task(run_ps_cmd())
+    stream_process(cmd, prefix=action.upper(), on_exit=_on_container_exit)
     return {"success": True, "message": f"Action '{action}' triggered for {account}"}
 
 
 @app.post("/api/upload/start")
 async def start_upload_task(payload: Dict[str, Any]):
     async with manager.lock:
-        if manager.active_process is not None and manager.active_process.returncode is None:
+        if manager.active_process is not None and manager.active_process.poll() is None:
             raise HTTPException(status_code=400, detail="An upload job is already running")
 
         video_path = payload.get("video_path")
         if not video_path or not Path(video_path).exists():
             raise HTTPException(status_code=400, detail="Valid video path is required")
 
-        account = payload.get("account", "Brand Alpha")
+        account = payload.get("account", "01")
         title = payload.get("title", "")
         sound = payload.get("sound")
         timestamp = payload.get("timestamp")
@@ -297,43 +354,16 @@ async def start_upload_task(payload: Dict[str, Any]):
         await manager.broadcast_log(f"[SYSTEM] Command: {' '.join(cmd)}\n")
         await manager.broadcast_log(f"{'='*60}\n")
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(BASE_DIR)
-        )
-        manager.active_process = proc
+        async def _on_upload_exit(code: int):
+            if code == 0:
+                await manager.broadcast_log(f"\n[SYSTEM] ✅ Upload completed successfully (Exit Code: {code})\n")
+            else:
+                await manager.broadcast_log(f"\n[SYSTEM] ❌ Upload process terminated with exit code {code}\n")
+            async with manager.lock:
+                manager.active_process = None
+                manager.active_job_info = None
 
-        # Background streaming reader
-        async def stream_output():
-            try:
-                while True:
-                    line = await proc.stdout.readline()
-                    if not line:
-                        break
-                    decoded = line.decode("utf-8", errors="ignore")
-                    await manager.broadcast_log(decoded)
-
-                _, stderr = await proc.communicate()
-                if stderr:
-                    err_decoded = stderr.decode("utf-8", errors="ignore")
-                    for l in err_decoded.splitlines():
-                        await manager.broadcast_log(f"[STDERR] {l}\n")
-
-                code = proc.returncode
-                if code == 0:
-                    await manager.broadcast_log(f"\n[SYSTEM] ✅ Upload completed successfully (Exit Code: {code})\n")
-                else:
-                    await manager.broadcast_log(f"\n[SYSTEM] ❌ Upload process terminated with exit code {code}\n")
-            except Exception as e:
-                await manager.broadcast_log(f"\n[SYSTEM] Process stream error: {e}\n")
-            finally:
-                async with manager.lock:
-                    manager.active_process = None
-                    manager.active_job_info = None
-
-        asyncio.create_task(stream_output())
+        stream_process(cmd, on_exit=_on_upload_exit, track_as_active=True)
 
         return {"success": True, "message": "Upload job started successfully"}
 
@@ -366,7 +396,7 @@ async def resume_upload(payload: Dict[str, Any]):
 @app.post("/api/upload/stop")
 async def stop_upload_task():
     async with manager.lock:
-        if manager.active_process is None or manager.active_process.returncode is not None:
+        if manager.active_process is None or manager.active_process.poll() is not None:
             return {"success": True, "message": "No active upload process to stop"}
 
         try:
@@ -380,30 +410,14 @@ async def stop_upload_task():
 
 @app.post("/api/upload/clean")
 async def clean_drafts_task(payload: Dict[str, Any]):
-    account = payload.get("account", "Brand Alpha")
+    account = payload.get("account", "01")
     script_path = BASE_DIR / "upload_short.py"
     python_exe = sys.executable
 
     cmd = [python_exe, "-u", str(script_path), "-c", "-a", str(account)]
     await manager.broadcast_log(f"[SYSTEM] 🧹 Cleaning emulator media, MediaStore, and YouTube upload session for {account}...\n")
 
-    async def _clean_worker():
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(BASE_DIR)
-        )
-        stdout, stderr = await proc.communicate()
-        out = stdout.decode("utf-8", errors="ignore")
-        if out:
-            for l in out.splitlines():
-                await manager.broadcast_log(f"[CLEAN] {l}\n")
-        if stderr:
-            for l in stderr.splitlines():
-                await manager.broadcast_log(f"[CLEAN-ERR] {l}\n")
-
-    asyncio.create_task(_clean_worker())
+    stream_process(cmd, prefix="CLEAN")
     return {"success": True, "message": f"Clean task initiated for {account}"}
 
 

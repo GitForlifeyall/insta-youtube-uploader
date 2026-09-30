@@ -5,7 +5,7 @@
 
 document.addEventListener("DOMContentLoaded", () => {
   // State
-  let currentAccount = "Brand Alpha";
+  let currentAccount = "01";
   let selectedVideoPath = null;
   let isUploading = false;
   let isPaused = false;
@@ -13,6 +13,26 @@ document.addEventListener("DOMContentLoaded", () => {
   let startTime = null;
   let ws = null;
   let logHistoryRaw = [];
+
+  // Helper for safe JSON fetching with meaningful errors
+  async function safeFetchJson(url, options = {}) {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}: ${text || res.statusText}`);
+      }
+      throw new Error(`Unexpected server response: ${text}`);
+    }
+    if (!res.ok) {
+      const msg = data.detail || data.error || data.message || `Request failed with status ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  }
 
   // DOM Elements
   const accountSelect = document.getElementById("accountSelect");
@@ -294,48 +314,63 @@ document.addEventListener("DOMContentLoaded", () => {
   btnScrcpy.addEventListener("click", async () => {
     const acc = getActiveAccount();
     showToast("Launching Scrcpy desktop view...", "info");
-    const res = await fetch("/api/container/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "scrcpy", account: acc })
-    });
-    const data = await res.json();
-    if (data.success) {
-      showToast("Scrcpy launched successfully!", "success");
-    } else {
-      showToast(`Scrcpy launch error: ${data.error}`, "error");
+    try {
+      const data = await safeFetchJson("/api/container/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "scrcpy", account: acc })
+      });
+      if (data.success) {
+        showToast("Scrcpy launched successfully!", "success");
+      } else {
+        showToast(`Scrcpy launch error: ${data.error || 'Failed'}`, "error");
+      }
+    } catch (e) {
+      showToast(`Scrcpy launch failed: ${e.message}`, "error");
     }
   });
 
   btnStartContainer.addEventListener("click", async () => {
     const acc = getActiveAccount();
     showToast(`Starting container ${acc}...`, "info");
-    await fetch("/api/container/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "start", account: acc })
-    });
+    try {
+      await safeFetchJson("/api/container/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", account: acc })
+      });
+    } catch (e) {
+      showToast(`Container start error: ${e.message}`, "error");
+    }
   });
 
   btnStopContainer.addEventListener("click", async () => {
     const acc = getActiveAccount();
     showToast(`Stopping container ${acc}...`, "info");
-    await fetch("/api/container/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "stop", account: acc })
-    });
+    try {
+      await safeFetchJson("/api/container/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop", account: acc })
+      });
+    } catch (e) {
+      showToast(`Container stop error: ${e.message}`, "error");
+    }
   });
 
   btnCleanDrafts.addEventListener("click", async () => {
     const acc = getActiveAccount();
     if (!confirm(`Reset MediaStore and clean YouTube drafts for ${acc}?`)) return;
     showToast("Cleaning upload session...", "info");
-    await fetch("/api/upload/clean", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account: acc })
-    });
+    try {
+      await safeFetchJson("/api/upload/clean", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: acc })
+      });
+    } catch (e) {
+      showToast(`Clean drafts error: ${e.message}`, "error");
+    }
   });
 
   // ==========================================
@@ -504,13 +539,12 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     try {
-      const res = await fetch("/api/upload/start", {
+      const data = await safeFetchJson("/api/upload/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
 
-      const data = await res.json();
       if (data.success) {
         showToast("Upload automation launched!", "success");
         pollStatus();
@@ -518,7 +552,7 @@ document.addEventListener("DOMContentLoaded", () => {
         showToast(`Launch failed: ${data.detail || data.error}`, "error");
       }
     } catch (e) {
-      showToast(`Network error: ${e}`, "error");
+      showToast(`Upload start failed: ${e.message}`, "error");
     }
   });
 
@@ -526,22 +560,29 @@ document.addEventListener("DOMContentLoaded", () => {
   btnPauseResume.addEventListener("click", async () => {
     const acc = getActiveAccount();
     const endpoint = isPaused ? "/api/upload/resume" : "/api/upload/pause";
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account: acc })
-    });
-    const data = await res.json();
-    if (data.success) {
-      pollStatus();
+    try {
+      const data = await safeFetchJson(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: acc })
+      });
+      if (data.success) {
+        pollStatus();
+      }
+    } catch (e) {
+      showToast(`Pause/Resume error: ${e.message}`, "error");
     }
   });
 
   // Stop / Abort Upload
   btnStopUpload.addEventListener("click", async () => {
     if (!confirm("Are you sure you want to abort the current upload?")) return;
-    await fetch("/api/upload/stop", { method: "POST" });
-    pollStatus();
+    try {
+      await safeFetchJson("/api/upload/stop", { method: "POST" });
+      pollStatus();
+    } catch (e) {
+      showToast(`Stop error: ${e.message}`, "error");
+    }
   });
 
   // ==========================================
