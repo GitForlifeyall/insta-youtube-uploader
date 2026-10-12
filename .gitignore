@@ -9,9 +9,8 @@ __pycache__/
 venv/
 env/
 
-# Session cache (sensitive tokens/cookies)
-sessions/*.json
-!sessions/.gitkeep
+# Session cache
+# (unignored by request to sync across machines)
 
 # Temporary upload directory
 uploads/*
@@ -30,6 +29,5 @@ uploads/*
 .vscode/
 .idea/
 
-uploader.db
 *.bak
 
