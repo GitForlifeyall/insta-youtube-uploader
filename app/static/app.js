@@ -2381,11 +2381,41 @@ function initComposerLivePreview() {
 let engagementRecentPostsCache = [];
 let engagementResolvedPost = null;
 let engagementControlsInitialized = false;
+let engagementActivityStatsCache = null;
 
 async function loadEngagementView() {
-  await loadRecentPostsDropdown();
+  await Promise.all([
+    loadRecentPostsDropdown(),
+    loadEngagementActivityStats()
+  ]);
   await renderSwarmAccountsList();
   initEngagementControls();
+}
+
+async function loadEngagementActivityStats() {
+  const slider = document.getElementById('inputDailySafeLimit');
+  const safeLimit = slider ? parseInt(slider.value, 10) : 30;
+  try {
+    const res = await fetch(`/api/engagement/activity-stats?safe_limit=${safeLimit}`);
+    if (res.ok) {
+      engagementActivityStatsCache = await res.json();
+      updateEngagementSafetyBanner(engagementActivityStatsCache);
+    }
+  } catch (err) {
+    console.error('Error fetching engagement activity stats:', err);
+  }
+}
+
+function updateEngagementSafetyBanner(data) {
+  if (!data) return;
+  const statTotal = document.getElementById('statTotalSwarmToday');
+  const statLimit = document.getElementById('statSafeLimitVal');
+  if (statTotal) {
+    statTotal.textContent = `${data.total_swarm_actions_today || 0} actions`;
+  }
+  if (statLimit) {
+    statLimit.textContent = `${data.safe_limit_default || 30} / day max`;
+  }
 }
 
 async function loadRecentPostsDropdown() {
@@ -2427,6 +2457,9 @@ async function renderSwarmAccountsList() {
     return;
   }
 
+  const slider = document.getElementById('inputDailySafeLimit');
+  const configuredLimit = slider ? parseInt(slider.value, 10) : 30;
+
   container.innerHTML = allAccounts.map(acc => {
     const initial = (acc.full_name || acc.username).charAt(0).toUpperCase();
     const avatarHtml = acc.profile_pic_url
@@ -2436,21 +2469,62 @@ async function renderSwarmAccountsList() {
     const proxyText = acc.proxy ? maskProxy(acc.proxy) : 'Direct IP';
     const isAuth = acc.is_authenticated;
 
+    // Daily activity quota lookup
+    const stat = engagementActivityStatsCache?.accounts?.[acc.username] || {
+      actions_today: 0,
+      safe_limit: configuredLimit,
+      is_limit_reached: false,
+      remaining: configuredLimit
+    };
+
+    const actionsToday = stat.actions_today || 0;
+    const safeLimit = configuredLimit || stat.safe_limit || 30;
+    const isLimitReached = actionsToday >= safeLimit;
+    const isWarning = !isLimitReached && actionsToday >= Math.floor(safeLimit * 0.7);
+    const pct = Math.min(100, Math.round((actionsToday / safeLimit) * 100));
+
+    let quotaBadgeClass = 'safe';
+    let quotaBadgeText = `🟢 ${actionsToday}/${safeLimit} Safe`;
+    if (isLimitReached) {
+      quotaBadgeClass = 'danger';
+      quotaBadgeText = `🛡️ Limit Reached (${actionsToday}/${safeLimit})`;
+    } else if (isWarning) {
+      quotaBadgeClass = 'warning';
+      quotaBadgeText = `⚠️ ${actionsToday}/${safeLimit} (${safeLimit - actionsToday} left)`;
+    }
+
+    const shouldCheck = isAuth && !isLimitReached;
+
     return `
-      <label class="swarm-account-item">
-        <div class="swarm-account-left">
-          <input type="checkbox" class="swarm-account-checkbox" value="${acc.username}" ${isAuth ? 'checked' : ''}>
-          ${avatarHtml}
-          <div>
-            <div class="swarm-account-name">@${acc.username}</div>
-            <div class="swarm-account-proxy">
-              <span>🌐</span>
-              <span>${proxyText}</span>
-              ${!isAuth ? '<span style="color:#ef4444; margin-left:4px;">(Offline)</span>' : ''}
+      <label class="swarm-account-item ${isLimitReached ? 'limit-reached' : ''}" style="${isLimitReached ? 'opacity: 0.85;' : ''}">
+        <div style="flex: 1; min-width: 0;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div class="swarm-account-left">
+              <input type="checkbox" class="swarm-account-checkbox" value="${acc.username}" ${shouldCheck ? 'checked' : ''} ${isLimitReached ? 'data-limit-reached="true"' : ''}>
+              ${avatarHtml}
+              <div>
+                <div class="swarm-account-name">
+                  @${acc.username}
+                  ${isLimitReached ? '<span style="font-size: 0.68rem; color: #f87171; font-weight: 700; margin-left: 6px; padding: 1px 5px; border-radius: 4px; background: rgba(239, 68, 68, 0.15);">PROTECTED</span>' : ''}
+                </div>
+                <div class="swarm-account-proxy">
+                  <span>🌐</span>
+                  <span>${proxyText}</span>
+                  ${!isAuth ? '<span style="color:#ef4444; margin-left:4px;">(Offline)</span>' : ''}
+                </div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="activity-quota-badge ${quotaBadgeClass}" title="Passed actions in last 24h. Posting is exempt.">
+                ${quotaBadgeText}
+              </span>
+              <span class="session-status-badge ${isAuth ? 'active' : 'expired'}">${isAuth ? 'Ready' : 'Expired'}</span>
             </div>
           </div>
+          <div class="quota-meter-bar" title="${actionsToday} of ${safeLimit} daily actions used">
+            <div class="quota-meter-fill ${quotaBadgeClass}" style="width: ${pct}%;"></div>
+          </div>
         </div>
-        <span class="session-status-badge ${isAuth ? 'active' : 'expired'}">${isAuth ? 'Ready' : 'Expired'}</span>
       </label>
     `;
   }).join('');
@@ -2469,6 +2543,12 @@ function initEngagementControls() {
   const btnLaunch = document.getElementById('btnLaunchSwarm');
   const delaySlider = document.getElementById('inputSafetyDelay');
   const delayDisplay = document.getElementById('delayDisplay');
+  const safeLimitSlider = document.getElementById('inputDailySafeLimit');
+  const safeLimitDisplay = document.getElementById('safeLimitSliderDisplay');
+  const btnRefreshStats = document.getElementById('btnRefreshActivityStats');
+  const btnOpenAudit = document.getElementById('btnOpenActivityAudit');
+  const btnRefreshAudit = document.getElementById('btnRefreshAuditLogs');
+  const selectAuditFilter = document.getElementById('selectAuditAccountFilter');
 
   // Action chips
   const actionCheckboxes = [
@@ -2476,6 +2556,7 @@ function initEngagementControls() {
     { chip: 'chipSave', check: 'checkActionSave' },
     { chip: 'chipComment', check: 'checkActionComment' },
     { chip: 'chipFollow', check: 'checkActionFollow' },
+    { chip: 'chipStory', check: 'checkActionStory' },
     { chip: 'chipRepost', check: 'checkActionRepost' }
   ];
 
@@ -2492,6 +2573,11 @@ function initEngagementControls() {
           const comGroup = document.getElementById('commentsRotationGroup');
           if (comGroup) comGroup.style.display = checkEl.checked ? 'block' : 'none';
         }
+        // Toggle visibility of story notice box
+        if (check === 'checkActionStory') {
+          const storyNotice = document.getElementById('storyNoticeBox');
+          if (storyNotice) storyNotice.style.display = checkEl.checked ? 'flex' : 'none';
+        }
         // Toggle visibility of repost caption box
         if (check === 'checkActionRepost') {
           const repGroup = document.getElementById('repostCaptionGroup');
@@ -2504,6 +2590,26 @@ function initEngagementControls() {
   if (delaySlider && delayDisplay) {
     delaySlider.addEventListener('input', () => {
       delayDisplay.textContent = parseFloat(delaySlider.value).toFixed(1) + 's';
+    });
+  }
+
+  if (safeLimitSlider && safeLimitDisplay) {
+    safeLimitSlider.addEventListener('input', () => {
+      safeLimitDisplay.textContent = `${safeLimitSlider.value} actions / 24h`;
+      const statLimit = document.getElementById('statSafeLimitVal');
+      if (statLimit) statLimit.textContent = `${safeLimitSlider.value} / day max`;
+    });
+    safeLimitSlider.addEventListener('change', async () => {
+      await loadEngagementActivityStats();
+      await renderSwarmAccountsList();
+    });
+  }
+
+  if (btnRefreshStats) {
+    btnRefreshStats.addEventListener('click', async () => {
+      await loadEngagementActivityStats();
+      await renderSwarmAccountsList();
+      showToast('Activity stats refreshed');
     });
   }
 
@@ -2536,7 +2642,11 @@ function initEngagementControls() {
 
   if (btnSelectAll) {
     btnSelectAll.addEventListener('click', () => {
-      document.querySelectorAll('.swarm-account-checkbox').forEach(cb => cb.checked = true);
+      document.querySelectorAll('.swarm-account-checkbox').forEach(cb => {
+        if (!cb.hasAttribute('data-limit-reached')) {
+          cb.checked = true;
+        }
+      });
     });
   }
 
@@ -2548,6 +2658,95 @@ function initEngagementControls() {
 
   if (btnLaunch) {
     btnLaunch.addEventListener('click', launchEngagementSwarm);
+  }
+
+  // Audit Log Modal Controls
+  if (btnOpenAudit) {
+    btnOpenAudit.addEventListener('click', () => {
+      openModal('modalActivityAudit');
+      populateAuditAccountDropdown();
+      loadActivityAuditLogs();
+    });
+  }
+
+  if (btnRefreshAudit) {
+    btnRefreshAudit.addEventListener('click', () => {
+      const filter = document.getElementById('selectAuditAccountFilter')?.value || '';
+      loadActivityAuditLogs(filter);
+    });
+  }
+
+  if (selectAuditFilter) {
+    selectAuditFilter.addEventListener('change', () => {
+      loadActivityAuditLogs(selectAuditFilter.value);
+    });
+  }
+}
+
+function populateAuditAccountDropdown() {
+  const select = document.getElementById('selectAuditAccountFilter');
+  if (!select) return;
+  const currentVal = select.value;
+  select.innerHTML = '<option value="">All Accounts</option>' +
+    allAccounts.map(a => `<option value="${a.username}" ${a.username === currentVal ? 'selected' : ''}>@${a.username}</option>`).join('');
+}
+
+async function loadActivityAuditLogs(usernameFilter = '') {
+  const container = document.getElementById('activityLogsTableContainer');
+  if (!container) return;
+
+  container.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-muted);"><span class="spinner" style="width:18px;height:18px;border-width:2px;display:inline-block;margin-right:8px;"></span> Loading activity logs...</div>';
+
+  try {
+    let url = '/api/engagement/activity-logs?limit=100';
+    if (usernameFilter) {
+      url += `&username=${encodeURIComponent(usernameFilter)}`;
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to load activity logs');
+    const logs = await res.json();
+
+    if (logs.length === 0) {
+      container.innerHTML = '<div style="padding: 30px; text-align: center; color: var(--text-muted);">No activity records found yet. Run an engagement swarm to track actions.</div>';
+      return;
+    }
+
+    container.innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Account</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Status</th>
+            <th>Details</th>
+            <th>Proxy Used</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${logs.map(lg => {
+            const dateStr = new Date(lg.created_at).toLocaleString();
+            let statusPillClass = lg.status === 'passed' ? 'passed' : (lg.status === 'skipped' ? 'skipped' : 'failed');
+            return `
+              <tr>
+                <td style="font-family: var(--font-mono); font-size: 0.72rem; color: #94a3b8; white-space: nowrap;">${dateStr}</td>
+                <td><strong>@${lg.username}</strong></td>
+                <td><span class="report-pill ${statusPillClass}">${lg.action_type.toUpperCase()}</span></td>
+                <td style="font-size: 0.75rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  ${lg.target_identifier?.startsWith('http') ? `<a href="${lg.target_identifier}" target="_blank" style="color: #818cf8;">Link</a>` : (lg.target_identifier || '-')}
+                </td>
+                <td><span class="badge-status ${lg.status === 'passed' ? 'published' : (lg.status === 'skipped' ? 'scheduled' : 'failed')}">${lg.status}</span></td>
+                <td style="font-size: 0.75rem; color: #cbd5e1; max-width: 200px;">${lg.details || '-'}</td>
+                <td style="font-family: var(--font-mono); font-size: 0.72rem; color: #94a3b8;">${lg.proxy_used ? maskProxy(lg.proxy_used) : 'Direct'}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    container.innerHTML = `<div style="padding: 20px; color: var(--accent-red); text-align: center;">Error loading logs: ${err.message}</div>`;
   }
 }
 
@@ -2635,12 +2834,17 @@ async function launchEngagementSwarm() {
   if (document.getElementById('checkActionSave')?.checked) actions.push('save');
   if (document.getElementById('checkActionComment')?.checked) actions.push('comment');
   if (document.getElementById('checkActionFollow')?.checked) actions.push('follow');
+  if (document.getElementById('checkActionStory')?.checked) actions.push('story');
   if (document.getElementById('checkActionRepost')?.checked) actions.push('repost');
 
   if (actions.length === 0) {
-    showToast('Please select at least one action (Like, Save, Comment, Follow, or Repost).', 'error');
+    showToast('Please select at least one action (Like, Save, Comment, Follow, Story, or Repost).', 'error');
     return;
   }
+
+  // Safe daily limit
+  const safeLimitSlider = document.getElementById('inputDailySafeLimit');
+  const safeLimit = safeLimitSlider ? parseInt(safeLimitSlider.value, 10) : 30;
 
   // Comments pool
   const commentsRaw = document.getElementById('textareaComments')?.value || '';
@@ -2666,7 +2870,7 @@ async function launchEngagementSwarm() {
         <div class="spinner" style="width: 32px; height: 32px; border-width: 3px; margin: 0 auto 16px auto;"></div>
         <h3 style="color: #fff; font-size: 1.1rem; margin-bottom: 8px;">Swarm Execution in Progress</h3>
         <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 500px; margin: 0 auto;">
-          Executing ${actions.join(', ').toUpperCase()} with proxies and ${delaySeconds}s human pacing...
+          Executing ${actions.join(', ').toUpperCase()} with proxies, safe limit (${safeLimit}/day), and ${delaySeconds}s human pacing...
         </p>
       </div>
     `;
@@ -2683,7 +2887,8 @@ async function launchEngagementSwarm() {
         actions: actions,
         comment_texts: commentTexts,
         repost_caption: repostCaption,
-        delay_seconds: delaySeconds
+        delay_seconds: delaySeconds,
+        safe_limit: safeLimit
       })
     });
     const report = await res.json();
@@ -2691,6 +2896,10 @@ async function launchEngagementSwarm() {
 
     renderEngagementReport(report);
     showToast(`Swarm completed: ${report.passed_count} passed, ${report.skipped_count} skipped, ${report.failed_count} failed.`);
+
+    // Refresh live daily activity stats and account cards
+    await loadEngagementActivityStats();
+    await renderSwarmAccountsList();
   } catch (err) {
     showToast(`Swarm Error: ${err.message}`, 'error');
     if (reportSec) {
@@ -2723,6 +2932,7 @@ function renderEngagementReport(report) {
           <h2 style="font-size: 1.25rem; font-weight: 800; color: #fff; margin-bottom: 4px;">Engagement Swarm Completion Report</h2>
           <div style="font-size: 0.8rem; color: var(--text-secondary);">
             Target: <a href="${report.target_url}" target="_blank" style="color: #6366f1; text-decoration: underline;">${report.target_url}</a> &bull; Author: <strong>@${report.author_username}</strong>
+            &bull; Safe Daily Cap: <strong>${report.safe_limit || 30} actions/24h</strong>
           </div>
         </div>
         <div style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">
@@ -2737,7 +2947,7 @@ function renderEngagementReport(report) {
         </div>
         <div class="report-kpi skipped">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
-          <span>${report.skipped_count} Skipped (Smart Checks)</span>
+          <span>${report.skipped_count} Skipped (Smart Checks & Safe Limits)</span>
         </div>
         <div class="report-kpi failed">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -2753,7 +2963,8 @@ function renderEngagementReport(report) {
           <thead>
             <tr>
               <th>Account</th>
-              <th>Assigned Proxy</th>
+              <th>Proxy</th>
+              <th>24h Usage</th>
               <th>Actions Breakdown</th>
               <th>Status</th>
             </tr>
@@ -2761,6 +2972,7 @@ function renderEngagementReport(report) {
           <tbody>
             ${accReports.map(ar => {
               const actionEntries = Object.entries(ar.actions || {});
+              const isLimit = ar.overall_status === 'limit_reached';
               return `
                 <tr>
                   <td>
@@ -2770,6 +2982,11 @@ function renderEngagementReport(report) {
                     ${ar.proxy ? maskProxy(ar.proxy) : 'Direct'}
                   </td>
                   <td>
+                    <span class="activity-quota-badge ${isLimit ? 'danger' : 'safe'}">
+                      ${ar.actions_today || 0} / ${ar.safe_limit || 30}
+                    </span>
+                  </td>
+                  <td>
                     <div style="display: flex; flex-direction: column; gap: 4px;">
                       ${actionEntries.map(([act, res]) => {
                         const actName = act.toUpperCase();
@@ -2777,6 +2994,9 @@ function renderEngagementReport(report) {
                         let detailText = res.message || res.error || '';
                         if (res.new_url) {
                           detailText += ` &bull; <a href="${res.new_url}" target="_blank" style="color: #818cf8; text-decoration: underline;">View Reel</a>`;
+                        }
+                        if (res.story_id) {
+                          detailText += ` &bull; <span style="color: #f43f5e; font-weight: 600;">Story Live</span>`;
                         }
                         return `
                           <div style="font-size: 0.77rem; display: flex; align-items: center; gap: 6px;">
@@ -2788,9 +3008,10 @@ function renderEngagementReport(report) {
                     </div>
                   </td>
                   <td>
-                    <span class="badge-status ${ar.overall_status === 'passed' ? 'published' : (ar.overall_status === 'partial' ? 'scheduled' : 'failed')}">
-                      ${ar.overall_status}
-                    </span>
+                    ${isLimit
+                      ? '<span class="badge-status expired" style="background:rgba(239,68,68,0.18);color:#f87171;border-color:rgba(239,68,68,0.35);">LIMIT REACHED</span>'
+                      : `<span class="badge-status ${ar.overall_status === 'passed' ? 'published' : (ar.overall_status === 'partial' ? 'scheduled' : 'failed')}">${ar.overall_status}</span>`
+                    }
                   </td>
                 </tr>
               `;

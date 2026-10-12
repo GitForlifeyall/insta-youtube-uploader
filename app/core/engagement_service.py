@@ -142,17 +142,20 @@ class EngagementService:
         actions: List[str],
         comment_texts: Optional[List[str]] = None,
         repost_caption: Optional[str] = None,
-        delay_seconds: float = 3.0
+        delay_seconds: float = 3.0,
+        safe_limit: int = 30
     ) -> Dict[str, Any]:
         """
-        Executes Like, Comment, Save, Follow Author, and Repost across selected accounts.
+        Executes Like, Comment, Save, Follow Author, Repost, and Share to Story across selected accounts.
+        Enforces a Safe Daily Limit (24-hour rolling window) to prevent account action bans.
+        Regular scheduled/manual posting is EXEMPT from this limit.
         Always routes each action through that account's assigned proxy in SQLite.
         """
         if not accounts:
             raise ValueError("Select at least one Instagram account to perform engagement.")
 
         if not actions:
-            raise ValueError("Select at least one engagement action (Like, Save, Comment, Follow, Repost).")
+            raise ValueError("Select at least one engagement action (Like, Save, Comment, Follow, Repost, Story).")
 
         # 1. Resolve Target Post
         target_meta = self.resolve_target_post(target_url)
@@ -161,14 +164,15 @@ class EngagementService:
         author_username = target_meta["author_username"]
         original_caption = target_meta["caption"]
         media_type = target_meta["media_type"]
+        clean_url = target_meta["target_url"]
 
         clean_comments = [c.strip() for c in (comment_texts or []) if c.strip()]
         if "comment" in actions and not clean_comments:
             clean_comments = ["Awesome! 🔥", "Love this 🎶", "On repeat 🎧", "Great vibe! 🙌"]
 
-        # 2. Pre-download video if 'repost' action is requested
+        # 2. Pre-download video if 'repost' or 'story' fallback is requested
         downloaded_media_path = None
-        if "repost" in actions:
+        if "repost" in actions or "story" in actions:
             try:
                 first_cl = client_manager.get_client(accounts[0])
                 if media_type == 2:  # Video / Reel
@@ -176,14 +180,15 @@ class EngagementService:
                 else:
                     downloaded_media_path = first_cl.photo_download(int(media_pk), folder=DOWNLOADS_DIR)
             except Exception as d_err:
-                logger.warning("Could not pre-download post for reposting: %r", d_err)
+                logger.warning("Could not pre-download post for repost/story: %r", d_err)
 
         report = {
-            "target_url": target_meta["target_url"],
+            "target_url": clean_url,
             "thumbnail_url": target_meta["thumbnail_url"],
             "author_username": author_username,
             "author_pk": author_pk,
             "total_accounts": len(accounts),
+            "safe_limit": safe_limit,
             "passed_count": 0,
             "skipped_count": 0,
             "failed_count": 0,
@@ -199,8 +204,37 @@ class EngagementService:
                 "proxy": proxy or "Direct IP (No Proxy)",
                 "actions": {},
                 "overall_status": "passed",
-                "errors": []
+                "errors": [],
+                "actions_today": 0,
+                "safe_limit": safe_limit
             }
+
+            # Pre-check Safe Daily Activity Limit (rolling 24 hours)
+            # Regular scheduled posting is EXEMPT from this check.
+            daily_stat = database.get_account_daily_activity(username, safe_limit=safe_limit, hours=24)
+            current_24h_count = daily_stat["actions_today"]
+            acc_rep["actions_today"] = current_24h_count
+
+            if current_24h_count >= safe_limit:
+                limit_msg = f"Safe daily limit reached ({current_24h_count}/{safe_limit} actions in last 24h). Account protected from ban (posting still allowed)."
+                acc_rep["overall_status"] = "limit_reached"
+                acc_rep["errors"].append(limit_msg)
+                for act in actions:
+                    acc_rep["actions"][act] = {
+                        "status": "skipped",
+                        "message": limit_msg
+                    }
+                    report["skipped_count"] += 1
+                database.record_account_activity(
+                    username=username,
+                    action_type="limit_guard",
+                    target_identifier=clean_url,
+                    status="skipped",
+                    details=limit_msg,
+                    proxy_used=proxy
+                )
+                report["account_reports"].append(acc_rep)
+                continue
 
             try:
                 cl = client_manager.get_client(username)
@@ -211,41 +245,119 @@ class EngagementService:
                 for act in actions:
                     acc_rep["actions"][act] = {"status": "failed", "error": err_msg}
                     report["failed_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type=act,
+                        target_identifier=clean_url,
+                        status="failed",
+                        details=err_msg,
+                        proxy_used=proxy
+                    )
                 report["account_reports"].append(acc_rep)
                 continue
 
+            # --- Helper to check limit before any action ---
+            def can_perform_action(action_name: str) -> bool:
+                nonlocal current_24h_count
+                if current_24h_count >= safe_limit:
+                    acc_rep["actions"][action_name] = {
+                        "status": "skipped",
+                        "message": f"Daily limit reached ({current_24h_count}/{safe_limit}). Account protected."
+                    }
+                    report["skipped_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type=action_name,
+                        target_identifier=clean_url,
+                        status="skipped",
+                        details=f"Limit reached ({current_24h_count}/{safe_limit})",
+                        proxy_used=proxy
+                    )
+                    return False
+                return True
+
             # --- ACTION A: LIKE ---
-            if "like" in actions:
+            if "like" in actions and can_perform_action("like"):
                 try:
                     liked = cl.media_like(str(media_pk))
                     if liked:
                         acc_rep["actions"]["like"] = {"status": "passed", "message": "Liked post"}
                         report["passed_count"] += 1
+                        current_24h_count += 1
+                        database.record_account_activity(
+                            username=username,
+                            action_type="like",
+                            target_identifier=clean_url,
+                            status="passed",
+                            details="Liked post",
+                            proxy_used=proxy
+                        )
                     else:
                         acc_rep["actions"]["like"] = {"status": "skipped", "message": "Already liked or no change"}
                         report["skipped_count"] += 1
+                        database.record_account_activity(
+                            username=username,
+                            action_type="like",
+                            target_identifier=clean_url,
+                            status="skipped",
+                            details="Already liked or no change",
+                            proxy_used=proxy
+                        )
                 except Exception as le:
                     acc_rep["actions"]["like"] = {"status": "failed", "error": str(le)}
                     acc_rep["errors"].append(f"Like: {str(le)}")
                     report["failed_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="like",
+                        target_identifier=clean_url,
+                        status="failed",
+                        details=str(le),
+                        proxy_used=proxy
+                    )
 
             # --- ACTION B: SAVE ---
-            if "save" in actions:
+            if "save" in actions and can_perform_action("save"):
                 try:
                     saved = cl.media_save(str(media_pk))
                     if saved:
                         acc_rep["actions"]["save"] = {"status": "passed", "message": "Saved post to bookmarks"}
                         report["passed_count"] += 1
+                        current_24h_count += 1
+                        database.record_account_activity(
+                            username=username,
+                            action_type="save",
+                            target_identifier=clean_url,
+                            status="passed",
+                            details="Saved post to bookmarks",
+                            proxy_used=proxy
+                        )
                     else:
                         acc_rep["actions"]["save"] = {"status": "skipped", "message": "Already saved"}
                         report["skipped_count"] += 1
+                        database.record_account_activity(
+                            username=username,
+                            action_type="save",
+                            target_identifier=clean_url,
+                            status="skipped",
+                            details="Already saved",
+                            proxy_used=proxy
+                        )
                 except Exception as se:
                     acc_rep["actions"]["save"] = {"status": "failed", "error": str(se)}
                     acc_rep["errors"].append(f"Save: {str(se)}")
                     report["failed_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="save",
+                        target_identifier=clean_url,
+                        status="failed",
+                        details=str(se),
+                        proxy_used=proxy
+                    )
 
             # --- ACTION C: COMMENT ---
-            if "comment" in actions:
+            if "comment" in actions and can_perform_action("comment"):
                 try:
                     comment_text = clean_comments[idx % len(clean_comments)]
                     comment_res = cl.media_comment(str(media_pk), comment_text)
@@ -255,13 +367,30 @@ class EngagementService:
                         "comment_id": str(getattr(comment_res, "pk", ""))
                     }
                     report["passed_count"] += 1
+                    current_24h_count += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="comment",
+                        target_identifier=clean_url,
+                        status="passed",
+                        details=f'Commented: "{comment_text}"',
+                        proxy_used=proxy
+                    )
                 except Exception as ce:
                     acc_rep["actions"]["comment"] = {"status": "failed", "error": str(ce)}
                     acc_rep["errors"].append(f"Comment: {str(ce)}")
                     report["failed_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="comment",
+                        target_identifier=clean_url,
+                        status="failed",
+                        details=str(ce),
+                        proxy_used=proxy
+                    )
 
             # --- ACTION D: FOLLOW AUTHOR ---
-            if "follow" in actions:
+            if "follow" in actions and can_perform_action("follow"):
                 try:
                     if str(cl.user_id) == str(author_pk) or username.lower() == author_username.lower():
                         acc_rep["actions"]["follow"] = {
@@ -269,6 +398,14 @@ class EngagementService:
                             "message": "Self-post (acting account is author)"
                         }
                         report["skipped_count"] += 1
+                        database.record_account_activity(
+                            username=username,
+                            action_type="follow",
+                            target_identifier=f"@{author_username}",
+                            status="skipped",
+                            details="Self-post (author)",
+                            proxy_used=proxy
+                        )
                     else:
                         already_following = False
                         try:
@@ -284,6 +421,14 @@ class EngagementService:
                                 "message": f"Already following @{author_username}"
                             }
                             report["skipped_count"] += 1
+                            database.record_account_activity(
+                                username=username,
+                                action_type="follow",
+                                target_identifier=f"@{author_username}",
+                                status="skipped",
+                                details=f"Already following @{author_username}",
+                                proxy_used=proxy
+                            )
                         else:
                             followed = cl.user_follow(str(author_pk))
                             if followed:
@@ -292,19 +437,44 @@ class EngagementService:
                                     "message": f"Followed @{author_username}"
                                 }
                                 report["passed_count"] += 1
+                                current_24h_count += 1
+                                database.record_account_activity(
+                                    username=username,
+                                    action_type="follow",
+                                    target_identifier=f"@{author_username}",
+                                    status="passed",
+                                    details=f"Followed @{author_username}",
+                                    proxy_used=proxy
+                                )
                             else:
                                 acc_rep["actions"]["follow"] = {
                                     "status": "skipped",
-                                    "message": f"Already followed or pending request"
+                                    "message": "Already followed or pending request"
                                 }
                                 report["skipped_count"] += 1
+                                database.record_account_activity(
+                                    username=username,
+                                    action_type="follow",
+                                    target_identifier=f"@{author_username}",
+                                    status="skipped",
+                                    details="Pending request or already followed",
+                                    proxy_used=proxy
+                                )
                 except Exception as fe:
                     acc_rep["actions"]["follow"] = {"status": "failed", "error": str(fe)}
                     acc_rep["errors"].append(f"Follow: {str(fe)}")
                     report["failed_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="follow",
+                        target_identifier=f"@{author_username}",
+                        status="failed",
+                        details=str(fe),
+                        proxy_used=proxy
+                    )
 
             # --- ACTION E: REPOST ---
-            if "repost" in actions:
+            if "repost" in actions and can_perform_action("repost"):
                 try:
                     if not downloaded_media_path or not Path(downloaded_media_path).exists():
                         raise ValueError("Media video file could not be downloaded for reposting")
@@ -333,10 +503,96 @@ class EngagementService:
                         "new_url": new_url
                     }
                     report["passed_count"] += 1
+                    current_24h_count += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="repost",
+                        target_identifier=clean_url,
+                        status="passed",
+                        details=f"Reposted to {new_url}",
+                        proxy_used=proxy
+                    )
                 except Exception as re_err:
                     acc_rep["actions"]["repost"] = {"status": "failed", "error": str(re_err)}
                     acc_rep["errors"].append(f"Repost: {str(re_err)}")
                     report["failed_count"] += 1
+                    database.record_account_activity(
+                        username=username,
+                        action_type="repost",
+                        target_identifier=clean_url,
+                        status="failed",
+                        details=str(re_err),
+                        proxy_used=proxy
+                    )
+
+            # --- ACTION F: SHARE TO STORY (PUSH REEL) ---
+            if "story" in actions and can_perform_action("story"):
+                media_id_param = f"{media_pk}_{author_pk}" if author_pk else str(media_pk)
+                story_success = False
+                # Try 1: Native media sticker share to story
+                try:
+                    story_res = cl.media_share_to_story(media_id_param)
+                    story_pk = getattr(story_res, "pk", "")
+                    acc_rep["actions"]["story"] = {
+                        "status": "passed",
+                        "message": "Shared Reel to Story with sticker",
+                        "story_id": str(story_pk)
+                    }
+                    report["passed_count"] += 1
+                    current_24h_count += 1
+                    story_success = True
+                    database.record_account_activity(
+                        username=username,
+                        action_type="story",
+                        target_identifier=clean_url,
+                        status="passed",
+                        details="Shared Reel sticker to Story",
+                        proxy_used=proxy
+                    )
+                except Exception as story_err:
+                    logger.warning("Native media_share_to_story failed (%r), attempting video story upload fallback...", story_err)
+
+                # Try 2: Video story upload fallback if native sticker share fails
+                if not story_success:
+                    try:
+                        if downloaded_media_path and Path(downloaded_media_path).exists():
+                            if media_type == 2:
+                                story_res = cl.video_upload_to_story(Path(downloaded_media_path))
+                            else:
+                                story_res = cl.photo_upload_to_story(Path(downloaded_media_path))
+                            story_pk = getattr(story_res, "pk", "")
+                            acc_rep["actions"]["story"] = {
+                                "status": "passed",
+                                "message": "Pushed Reel video to Story",
+                                "story_id": str(story_pk)
+                            }
+                            report["passed_count"] += 1
+                            current_24h_count += 1
+                            database.record_account_activity(
+                                username=username,
+                                action_type="story",
+                                target_identifier=clean_url,
+                                status="passed",
+                                details="Pushed Reel media to Story",
+                                proxy_used=proxy
+                            )
+                        else:
+                            raise ValueError(f"Story push failed and no downloaded media available: {str(story_err)}")
+                    except Exception as fb_err:
+                        acc_rep["actions"]["story"] = {"status": "failed", "error": str(fb_err)}
+                        acc_rep["errors"].append(f"Story: {str(fb_err)}")
+                        report["failed_count"] += 1
+                        database.record_account_activity(
+                            username=username,
+                            action_type="story",
+                            target_identifier=clean_url,
+                            status="failed",
+                            details=str(fb_err),
+                            proxy_used=proxy
+                        )
+
+            # Update final actions_today count on report
+            acc_rep["actions_today"] = current_24h_count
 
             # Calculate overall status for this account
             action_statuses = [a.get("status") for a in acc_rep["actions"].values()]

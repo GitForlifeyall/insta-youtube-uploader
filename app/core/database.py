@@ -12,7 +12,7 @@ Stores:
 import sqlite3
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -160,6 +160,22 @@ def init_db():
                 recorded_at TEXT NOT NULL
             );
         """)
+
+        # 8. Account Activity Logs & Safe Daily Limit Tracker
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS account_activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                target_identifier TEXT,
+                status TEXT NOT NULL,
+                details TEXT,
+                proxy_used TEXT,
+                created_at TEXT NOT NULL
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_user_created ON account_activity_logs(username, created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_created ON account_activity_logs(created_at DESC);")
 
         # Safe column additions if migrating
         for col_def in [
@@ -717,6 +733,148 @@ def increment_evergreen_usage(evergreen_id: str):
             WHERE id = ?;
         """, (now, evergreen_id))
         conn.commit()
+
+
+# ==========================================
+# 8. ACCOUNT DAILY ACTIVITY & SAFETY LIMITS
+# ==========================================
+
+def record_account_activity(
+    username: str,
+    action_type: str,
+    target_identifier: str = "",
+    status: str = "passed",
+    details: str = "",
+    proxy_used: str = ""
+) -> int:
+    """
+    Records an engagement action (like, save, comment, follow, repost, story) in SQLite.
+    status can be: 'passed' (consumed an IG action), 'skipped', or 'failed'.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO account_activity_logs (
+                username, action_type, target_identifier, status, details, proxy_used, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (username, action_type, target_identifier, status, details, proxy_used or "", now))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_account_daily_activity(
+    username: str,
+    safe_limit: int = 30,
+    hours: int = 24
+) -> Dict[str, Any]:
+    """
+    Calculates passed engagement actions in the last `hours` (rolling window) for an account.
+    Returns whether the safe limit is reached, remaining actions, and breakdown.
+    Note: Regular scheduled/manual posting is EXEMPT from this limit.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Only passed engagement actions count toward Instagram rate limit safety
+        cursor.execute("""
+            SELECT action_type, COUNT(*) as cnt
+            FROM account_activity_logs
+            WHERE username = ? AND status = 'passed' AND created_at >= ?
+            GROUP BY action_type;
+        """, (username, cutoff))
+        rows = cursor.fetchall()
+
+    breakdown = {}
+    total_passed = 0
+    for r in rows:
+        act = r["action_type"]
+        cnt = r["cnt"]
+        breakdown[act] = cnt
+        total_passed += cnt
+
+    remaining = max(0, safe_limit - total_passed)
+    is_limit_reached = total_passed >= safe_limit
+
+    return {
+        "username": username,
+        "actions_today": total_passed,
+        "safe_limit": safe_limit,
+        "remaining": remaining,
+        "is_limit_reached": is_limit_reached,
+        "breakdown": breakdown,
+        "window_hours": hours
+    }
+
+
+def get_all_accounts_daily_activity(
+    safe_limit: int = 30,
+    hours: int = 24
+) -> Dict[str, Any]:
+    """
+    Returns daily activity statistics across all registered accounts.
+    """
+    accounts = list_accounts()
+    account_stats = {}
+    total_swarm_actions_today = 0
+    accounts_at_limit_count = 0
+
+    for acc in accounts:
+        uname = acc["username"]
+        stat = get_account_daily_activity(uname, safe_limit=safe_limit, hours=hours)
+        account_stats[uname] = stat
+        total_swarm_actions_today += stat["actions_today"]
+        if stat["is_limit_reached"]:
+            accounts_at_limit_count += 1
+
+    return {
+        "accounts": account_stats,
+        "total_swarm_actions_today": total_swarm_actions_today,
+        "accounts_at_limit_count": accounts_at_limit_count,
+        "safe_limit_default": safe_limit,
+        "window_hours": hours
+    }
+
+
+def get_recent_activity_logs(
+    limit: int = 50,
+    username: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Retrieves the most recent activity logs across all or a specific account.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if username:
+            cursor.execute("""
+                SELECT id, username, action_type, target_identifier, status, details, proxy_used, created_at
+                FROM account_activity_logs
+                WHERE username = ?
+                ORDER BY created_at DESC
+                LIMIT ?;
+            """, (username, limit))
+        else:
+            cursor.execute("""
+                SELECT id, username, action_type, target_identifier, status, details, proxy_used, created_at
+                FROM account_activity_logs
+                ORDER BY created_at DESC
+                LIMIT ?;
+            """, (limit,))
+        
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "username": r["username"],
+                "action_type": r["action_type"],
+                "target_identifier": r["target_identifier"],
+                "status": r["status"],
+                "details": r["details"],
+                "proxy_used": r["proxy_used"],
+                "created_at": r["created_at"]
+            }
+            for r in rows
+        ]
 
 
 # Initialize schema on load

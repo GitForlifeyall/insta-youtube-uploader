@@ -286,8 +286,51 @@
         </div>
         <h1 class="hero-title">Engagement Farming Engine</h1>
         <p class="hero-desc">
-          Boost your Reels and song videos into Instagram recommendations. Like, Save, Comment, Follow post authors (skips if already following), and Repost across all your connected profiles—strictly routed through each account's dedicated proxy with human safety delays.
+          Boost your Reels and song videos into Instagram recommendations. Like, Save, Comment, Follow post authors (skips if already following), Repost, and Share to Stories across all your connected profiles—strictly routed through each account's dedicated proxy with human safety delays.
         </p>
+      </div>
+
+      <!-- Network Activity & Safe Limits Tracker Bar -->
+      <div class="network-safety-banner" id="networkSafetyBanner">
+        <div class="safety-stat-item">
+          <div class="safety-stat-icon" style="color: #38bdf8;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          </div>
+          <div>
+            <div class="safety-stat-val" id="statTotalSwarmToday">0 actions</div>
+            <div class="safety-stat-label">Network Activity (24h Window)</div>
+          </div>
+        </div>
+
+        <div class="safety-stat-item">
+          <div class="safety-stat-icon" style="color: #34d399;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          </div>
+          <div>
+            <div class="safety-stat-val" id="statSafeLimitVal">30 / day max</div>
+            <div class="safety-stat-label">Safe Daily Limit / Account</div>
+          </div>
+        </div>
+
+        <div class="safety-stat-item">
+          <div class="safety-stat-icon" style="color: #a855f7;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          </div>
+          <div>
+            <div class="safety-stat-val" id="statPostingExemption">Posting Always Active</div>
+            <div class="safety-stat-label">Reel Uploads 100% Exempt</div>
+          </div>
+        </div>
+
+        <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+          <button type="button" class="btn btn-secondary btn-sm" id="btnOpenActivityAudit">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <span>Activity Log</span>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnRefreshActivityStats" title="Refresh Activity Stats">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>
+        </div>
       </div>
 
       <!-- Main Two-Column Workflow Container -->
@@ -362,6 +405,12 @@
               <span>Follow Author</span>
             </label>
 
+            <label class="action-chip active" id="chipStory">
+              <input type="checkbox" id="checkActionStory" checked>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+              <span>Share to Story</span>
+            </label>
+
             <label class="action-chip" id="chipRepost">
               <input type="checkbox" id="checkActionRepost">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
@@ -372,6 +421,11 @@
           <div class="follow-notice">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
             <div><strong>Smart Follow Check:</strong> The engine checks if the target author is already followed by the acting profile. If already following, it safely skips; if not, it follows.</div>
+          </div>
+
+          <div class="story-notice" id="storyNoticeBox">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0; margin-top: 1px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            <div><strong>Reel Story Push:</strong> Posts target reel to each account's Story as an interactive clickable sticker (or video clip), boosting organic algorithmic distribution.</div>
           </div>
 
           <!-- Dynamic Comments Rotation Box -->
@@ -385,6 +439,18 @@
           <div class="form-group" id="repostCaptionGroup" style="margin-top: 14px; display: none;">
             <label class="form-label" for="inputRepostCaption">Custom Repost Caption (Optional)</label>
             <textarea class="form-textarea" id="inputRepostCaption" rows="2" placeholder="Leave empty to use original caption with author credit..."></textarea>
+          </div>
+
+          <!-- Safe Daily Limit Slider -->
+          <div class="form-group" style="margin-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <label class="form-label" style="margin-bottom: 0;">Safe Daily Activity Limit per Account</label>
+              <span id="safeLimitSliderDisplay" style="font-family: var(--font-mono); font-size: 0.8rem; color: #38bdf8; font-weight: 700;">30 actions / 24h</span>
+            </div>
+            <input type="range" min="5" max="60" step="5" value="30" class="form-range" id="inputDailySafeLimit" style="width: 100%; margin-top: 6px;">
+            <div class="form-help" style="font-size: 0.74rem; color: var(--text-muted); margin-top: 4px;">
+              Accounts reaching this limit in 24 hours are auto-skipped from engagement to prevent Instagram bans. <strong>Scheduled & manual posting remains 100% exempt.</strong>
+            </div>
           </div>
 
           <!-- Safety Delay Setting -->
@@ -926,6 +992,41 @@
       </div>
       <div class="modal-body" id="postDetailBody">
         <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 10: Account Activity & Safety Audit Log -->
+  <div class="modal-overlay" id="modalActivityAudit">
+    <div class="modal-content wide" style="max-width: 980px;">
+      <div class="modal-header">
+        <div class="modal-title" style="display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #38bdf8;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          <span>Account Activity & Safety Audit Log (24h)</span>
+        </div>
+        <button class="modal-close-btn" data-close="modalActivityAudit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+          <div style="font-size: 0.85rem; color: var(--text-secondary);">
+            Live tracking of passed, skipped, and blocked actions across all swarm accounts. Only passed actions count against the daily safe limit.
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <select class="form-select form-select-sm" id="selectAuditAccountFilter" style="width: auto; min-width: 140px;">
+              <option value="">All Accounts</option>
+            </select>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnRefreshAuditLogs">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="table-responsive" id="activityLogsTableContainer" style="max-height: 520px; overflow-y: auto;">
+          <div style="padding: 24px; text-align: center; color: var(--text-muted);">Loading activity logs...</div>
+        </div>
       </div>
     </div>
   </div>
