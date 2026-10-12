@@ -3,83 +3,33 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
 # Virtual environments
 .env
 .venv
-env/
 venv/
-ENV/
-env.bak/
-venv.bak/
+env/
 
-# Sensitive data & sessions
-*.session.json
-.session.json
-sessions/
-**/sessions/
-data/
-**/data/
-cookies.json
-*.cookie
-*.flag
+# Session cache (sensitive tokens/cookies)
+sessions/*.json
+!sessions/.gitkeep
 
-# Large Archives & Binaries (>100MB / backups)
-*.zip
-*.tar.gz
-*.tar
-*.bak
-docker_export/
-redroid_instagram_complete.zip
+# Temporary upload directory
+uploads/*
+!uploads/.gitkeep
 
-# Redroid Manager Web UI
-redroid_manager/
-**/redroid_manager/
-
-# IDE & Editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Logs & temporary output
-*.log
-scrcpy_*.log
-youtube_audio_error.log
-morphelogs.txt
-
-# Media / temporary uploads
-media_queue/
-uploads/
+# Media & temp files
 *.mp4
-*.mkv
 *.mov
-*.png
+*.mkv
 *.jpg
 *.jpeg
-*.xml
+*.png
+*.log
 
-# Keep specific necessary files if needed
-!ytuploader/upload files/.gitkeep
+# Editor directories
+.vscode/
+.idea/
+
+uploader.db
+*.bak
+

@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metricool &bull; Social Hub Automation Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Top Navigation Header: Metricool Style -->
+  <header class="header">
+    <div class="container header-inner">
+      <!-- Left: Metricool styled Logo & Workspace Brand Switcher -->
+      <div class="brand-group">
+        <div class="brand-logo-icon" title="Social Hub">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        
+        <!-- Workspace / Brand Dropdown Pill -->
+        <div class="workspace-pill" id="workspacePill" title="Active Brand Workspace">
+          <span class="workspace-dot" id="workspaceDotIndicator" title="Active Workspace Status"></span>
+          <div class="workspace-select-wrapper">
+            <select id="globalBrandSelect" class="workspace-select" aria-label="Select Brand Workspace">
+              <!-- Dynamically populated -->
+            </select>
+            <span class="workspace-chevron" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </span>
+          </div>
+          <button type="button" class="btn-icon-subtle" id="btnOpenAddBrand" title="Add New Brand Workspace">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Center: Core Navigation Tabs (Planning, Analytics, Content Vault, Queue, Accounts) -->
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <button type="button" class="tab-btn active" data-tab="planner">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+          </span>
+          <span>Planning</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="analytics">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+          </span>
+          <span>Analytics</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="folders">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          </span>
+          <span>Content Vault</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="queue">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          </span>
+          <span>Queue</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="accounts">
+          <span class="tab-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+          </span>
+          <span>Accounts</span>
+        </button>
+      </nav>
+
+      <!-- Right: Action Buttons -->
+      <div class="header-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="btnOpenCsvModal" title="Bulk Schedule via CSV Importer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="16" y2="17"></line></svg>
+          <span>CSV Import</span>
+        </button>
+
+        <button type="button" class="btn-master-post btn-sm" id="btnMasterPostAll" title="Publish next pending post across ALL brands!">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"></path><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"></path></svg>
+          <span>Post All</span>
+        </button>
+
+        <button type="button" class="btn btn-primary btn-sm" id="btnOpenUploader" title="Create or Schedule Reel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>Schedule Post</span>
+        </button>
+
+        <button type="button" class="btn btn-secondary btn-icon-only" id="btnOpenAllFolders" title="Open media_queue in Windows File Explorer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+        </button>
+
+        <button type="button" class="btn btn-secondary btn-icon-only" id="btnOpenAddAccount" title="Connect Instagram Profile">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+        </button>
+
+        <button type="button" class="btn btn-secondary btn-icon-only" id="btnOpenHistory" title="Database History Logs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        </button>
+
+        <!-- Hidden element for JS safety -->
+        <a href="/docs" target="_blank" id="btnSwagger" style="display: none;"></a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <main class="container">
+
+    <!-- VIEW 1: METRICOOL PLANNING & CALENDAR -->
+    <section id="view-planner" class="view-panel active">
+      <div class="calendar-toolbar">
+        <div class="calendar-nav-group">
+          <button type="button" class="btn btn-secondary btn-icon-only" id="btnCalPrev" title="Previous Month">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </button>
+          <button type="button" class="btn btn-secondary" id="btnCalToday">Today</button>
+          <button type="button" class="btn btn-secondary btn-icon-only" id="btnCalNext" title="Next Month">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+          </button>
+          <div class="calendar-title" id="calCurrentMonthTitle">October 2026</div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="loadQueuePosts(); document.querySelector('[data-tab=\'queue\']')?.click();" title="View Full List Queue">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            <span>List Queue</span>
+          </button>
+          <button type="button" class="btn btn-primary" onclick="openCreatePostModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>Schedule Post</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="calendar-grid-container">
+        <div class="calendar-weekdays-header">
+          <div class="calendar-weekday">Mon</div>
+          <div class="calendar-weekday">Tue</div>
+          <div class="calendar-weekday">Wed</div>
+          <div class="calendar-weekday">Thu</div>
+          <div class="calendar-weekday">Fri</div>
+          <div class="calendar-weekday">Sat</div>
+          <div class="calendar-weekday">Sun</div>
+        </div>
+        <div class="calendar-days-grid" id="calendarDaysGrid">
+          <!-- Calendar cells rendered dynamically -->
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 2: ANALYTICS & DASHBOARD -->
+    <section id="view-analytics" class="view-panel">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div>
+          <h2 style="font-size: 1.3rem; font-weight: 800; color: #fff;">Performance & Audience Analytics</h2>
+          <p style="color: var(--text-secondary); font-size: 0.85rem;">Track Reel impressions, plays, and reach across all managed accounts.</p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="refreshAnalytics()" title="Refresh Analytics Data">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <div class="hero-kpi-row" id="analyticsKpiRow" style="margin-bottom: 24px;">
+        <!-- KPI Pills rendered dynamically -->
+      </div>
+
+      <h3 style="font-size: 1rem; font-weight: 700; color: #fff; margin-bottom: 12px;">Recent Post Publishing Log</h3>
+      <div class="table-responsive" id="analyticsRecentLogs">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 3: BRAND FOLDERS / CONTENT VAULT -->
+    <section id="view-folders" class="view-panel">
+      <div class="folder-hero-card">
+        <div class="hero-badge">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          <span>1-Click Multi-Brand Publisher</span>
+        </div>
+        <h1 class="hero-title">Automated Folder Content Vault</h1>
+        <p class="hero-desc">
+          Drop videos or photos directly into each brand's queue folder. Click "Post All" to dispatch the next pending media item to Instagram simultaneously, or publish individual brands on demand.
+        </p>
+        <div class="hero-kpi-row">
+          <div class="hero-kpi-pill">
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            </div>
+            <div>
+              <div class="kpi-val" id="statFolderBrandsCount">0</div>
+              <div class="kpi-title">Active Brands</div>
+            </div>
+          </div>
+          <div class="hero-kpi-pill">
+            <div class="kpi-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </div>
+            <div>
+              <div class="kpi-val" id="statFolderQueueTotal">0</div>
+              <div class="kpi-title">Pending Media Items</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="brands-folders-grid" id="brandFoldersGrid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 4: QUEUE & LIVE DISPATCH STATUS -->
+    <section id="view-queue" class="view-panel">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div>
+          <h3 style="font-size: 1.15rem; font-weight: 700; color: #fff;">Scheduled Posts Queue & Dispatch Status</h3>
+          <p style="font-size: 0.82rem; color: var(--text-secondary);">Posts waiting for their scheduled time or currently publishing via background scheduler.</p>
+        </div>
+        <button type="button" class="btn btn-secondary btn-icon-only" onclick="loadQueuePosts()" title="Refresh Queue">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        </button>
+      </div>
+
+      <div class="table-responsive" id="queueTableContainer">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- VIEW 7: ACCOUNTS & PROXY MANAGER -->
+    <section id="view-accounts" class="view-panel">
+      <div class="top-controls">
+        <div class="controls-left">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="searchInput" placeholder="Search by username or name...">
+          </div>
+
+          <div class="filter-pills">
+            <button class="filter-pill active" data-filter="all">All Accounts</button>
+            <button class="filter-pill" data-filter="active">Active Only</button>
+            <button class="filter-pill" data-filter="expired">Expired</button>
+            <button class="filter-pill" data-filter="proxy">With Proxy</button>
+          </div>
+
+          <button class="btn btn-secondary btn-icon-only" id="btnRefresh" title="Refresh Accounts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          </button>
+        </div>
+
+        <div class="stats-summary">
+          <div class="stat-chip">
+            <span class="dot green"></span>
+            <span id="activeCount">0</span> Active
+          </div>
+          <div class="stat-chip">
+            <span class="dot red"></span>
+            <span id="expiredCount">0</span> Expired
+          </div>
+        </div>
+      </div>
+
+      <div class="accounts-grid" id="accountsGrid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==============================================================================
+       METRICOOL MODALS
+       ============================================================================== -->
+
+  <!-- Modal 1: Connect / Attach Account Profile -->
+  <div class="modal-overlay" id="modalConnectAccount">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+          <span>Attach Profile to Instagram Page</span>
+        </div>
+        <button class="modal-close-btn" data-close="modalConnectAccount">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-tabs">
+          <button class="modal-tab-btn active" data-tab="tabBrowserLogin">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            <span>Browser Login (Proxy)</span>
+          </button>
+          <button class="modal-tab-btn" data-tab="tabPurchased">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path></svg>
+            <span>1-Click Paste</span>
+          </button>
+          <button class="modal-tab-btn" data-tab="tabSessionId">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span>Session ID Cookie</span>
+          </button>
+          <button class="modal-tab-btn" data-tab="tabCredentials">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            <span>Credentials</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: Browser Login -->
+        <div id="tabBrowserLogin" class="tab-content active">
+          <form id="formStartBrowserLogin">
+            <div class="form-group">
+              <label class="form-label" for="browserLoginProxy">Proxy Connection String (Optional)</label>
+              <input type="text" class="form-input" id="browserLoginProxy" placeholder="http://user:pass@host:port">
+            </div>
+            <button type="submit" class="btn btn-primary" id="btnLaunchBrowser" style="width: 100%;">
+              <span>Launch Browser Window</span>
+            </button>
+          </form>
+
+          <div id="browserActivePanel" style="display: none; margin-top: 20px; padding: 16px; background: rgba(56,189,248,0.06); border: 1px solid rgba(56,189,248,0.2); border-radius: 8px;">
+            <div style="font-size: 0.88rem; color: #bae6fd; font-weight: 600;" id="browserStatusText">
+              Browser open. Please log in to Instagram...
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 14px;">
+              <button type="button" class="btn btn-primary" id="btnExtractBrowserSession" style="flex: 1;">
+                <span>Extract Session</span>
+              </button>
+              <button type="button" class="btn btn-secondary" id="btnExtractSession" style="display: none;">Extract Session</button>
+              <button type="button" class="btn btn-secondary" id="btnCancelBrowser">
+                <span>Cancel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: 1-Click Paste (Purchased Account) -->
+        <div id="tabPurchased" class="tab-content" style="display: none;">
+          <form id="formAttachPurchased">
+            <div class="form-group">
+              <label class="form-label" for="purchasedRawInput">Raw Purchased Account String</label>
+              <textarea class="form-textarea" id="purchasedRawInput" rows="3" placeholder="user:pass:2fa:email... or user;pass;2fa..."></textarea>
+            </div>
+            <div id="purchasedParsedPreview" style="display: none; background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px; margin-bottom: 14px; font-size: 0.8rem;">
+              <div>User: <strong id="previewUser">-</strong></div>
+              <div>Pass: <strong id="previewPass">••••••</strong></div>
+              <div>2FA Secret: <strong id="preview2FA">-</strong></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="purchasedProxyOverride">Proxy Connection String (Optional)</label>
+              <input type="text" class="form-input" id="purchasedProxyOverride" placeholder="http://user:pass@host:port">
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="submit" class="btn btn-primary" id="btnSubmitPurchased" style="flex: 1;">
+                <span>Import & Save Account</span>
+              </button>
+              <button type="button" id="btnSubmitPurchasedLogin" style="display: none;"></button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Tab 3: Session ID Cookie -->
+        <div id="tabSessionId" class="tab-content" style="display: none;">
+          <form id="formAttachSessionId">
+            <div class="form-group">
+              <label class="form-label" for="sessionUsername">Instagram Username</label>
+              <input type="text" class="form-input" id="sessionUsername" required placeholder="Instagram username">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sessionCookie">sessionid Cookie Value</label>
+              <input type="text" class="form-input" id="sessionCookie" required placeholder="Paste sessionid cookie here">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sessionPassword">Password (Optional)</label>
+              <input type="password" class="form-input" id="sessionPassword" placeholder="Stored for re-login">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sessionProxy">Account Proxy (Optional)</label>
+              <input type="text" class="form-input" id="sessionProxy" placeholder="http://user:pass@host:port">
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="submit" class="btn btn-primary" id="btnSubmitSessionId" style="flex: 1;">
+                <span>Connect via Session ID</span>
+              </button>
+              <button type="button" id="btnSubmitSessionLogin" style="display: none;"></button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Tab 4: Standard Credentials -->
+        <div id="tabCredentials" class="tab-content" style="display: none;">
+          <form id="formAttachCreds">
+            <div class="form-group">
+              <label class="form-label" for="credsUsername">Username</label>
+              <input type="text" class="form-input" id="credsUsername" required placeholder="Instagram username">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="credsPassword">Password</label>
+              <input type="password" class="form-input" id="credsPassword" required placeholder="Instagram password">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="credsTotpSecret">2FA / TOTP Secret Key (Optional)</label>
+              <input type="text" class="form-input" id="credsTotpSecret" placeholder="e.g. JBSWY3DPEHPK3PXP (auto-resolves 2FA)">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="credsProxy">Account Proxy (Optional)</label>
+              <input type="text" class="form-input" id="credsProxy" placeholder="http://user:pass@host:port">
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="submit" class="btn btn-primary" id="btnSubmitCreds" style="flex: 1;">
+                <span>Log In via Credentials</span>
+              </button>
+            </div>
+          </form>
+
+          <!-- Built-in 2FA Code Helper -->
+          <div style="margin-top: 16px; padding: 12px; background: var(--bg-card-inner); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);">
+            <div style="font-size: 0.76rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px;">TOTP 2FA Code Generator</div>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" class="form-input" id="helper2faSecret" placeholder="Paste 2FA Secret here" style="font-size: 0.8rem; padding: 6px 10px;">
+              <button type="button" class="btn btn-secondary btn-sm" id="btnGen2FA">Generate</button>
+            </div>
+            <div id="helper2faResult" style="display: none; margin-top: 8px; font-size: 0.82rem; color: #34d399;">
+              Code: <strong id="helper2faCode" style="font-family: var(--font-mono); letter-spacing: 2px;">------</strong>
+              <span id="helper2faTimer" style="font-size: 0.72rem; color: var(--text-muted); margin-left: 8px;">(30s)</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Account Detail -->
+  <div class="modal-overlay" id="modalAccountDetail">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title" id="detailModalTitle">Account Overview</div>
+        <button class="modal-close-btn" data-close="modalAccountDetail">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="detailModalBody">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: METRICOOL SPLIT-SCREEN POST COMPOSER WITH LIVE INSTAGRAM MOCKUP -->
+  <div class="modal-overlay" id="modalUpload">
+    <div class="modal-content wide">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+          <span>Post Composer & Instagram Publisher</span>
+        </div>
+        <button class="modal-close-btn" data-close="modalUpload">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="composer-split-grid">
+          <!-- Left Column: Post Parameters Form -->
+          <div>
+            <form id="formQuickUpload">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <div class="form-group">
+                  <label class="form-label" for="uploadBrandSelect">Target Brand Workspace</label>
+                  <select class="form-select" id="uploadBrandSelect" required>
+                    <!-- Populated dynamically -->
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="uploadAccountSelect">Target Instagram Profile</label>
+                  <select class="form-select" id="uploadAccountSelect" required>
+                    <!-- Populated dynamically -->
+                  </select>
+                </div>
+              </div>
+
+              <!-- Media Drop Zone -->
+              <div class="form-group">
+                <label class="form-label">Video / Reel Media File</label>
+                <div id="mediaDropZone" class="media-drop-zone">
+                  <input type="file" id="mediaFileInput" accept="video/mp4,video/quicktime,video/webm,image/jpeg,image/png" style="display: none;">
+                  
+                  <div id="dropZonePrompt" class="drop-zone-content">
+                    <div class="drop-zone-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    </div>
+                    <div class="drop-zone-title">Drag & drop your video or photo here</div>
+                    <div class="drop-zone-subtitle">or <button type="button" class="btn-browse-link" id="btnBrowseMedia">browse files</button> from your computer</div>
+                    <div class="drop-zone-hints">Supports MP4, MOV, JPG, PNG</div>
+                  </div>
+
+                  <div id="mediaPreviewCard" class="media-preview-card" style="display: none;">
+                    <div class="media-preview-thumb" id="mediaPreviewThumb">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    </div>
+                    <div class="media-preview-info">
+                      <div class="media-preview-name" id="mediaPreviewName">video.mp4</div>
+                      <div class="media-preview-meta" id="mediaPreviewMeta">0 MB &bull; Uploaded</div>
+                    </div>
+                    <button type="button" class="btn-remove-media" id="btnRemoveMedia" title="Remove file">&times;</button>
+                  </div>
+                </div>
+
+                <!-- Server Path Toggle Input -->
+                <div style="margin-top: 6px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span class="form-help">Server file path:</span>
+                    <button type="button" id="btnToggleManualPath" style="background: none; border: none; color: var(--mc-primary); font-size: 0.74rem; cursor: pointer; text-decoration: underline;">
+                      Edit path manually
+                    </button>
+                  </div>
+                  <input type="text" class="form-input" id="uploadVideoPath" placeholder="Absolute or relative path to media" required style="font-size: 0.8rem; margin-top: 4px; display: none;">
+                </div>
+              </div>
+
+              <!-- Caption -->
+              <div class="form-group">
+                <label class="form-label" for="uploadCaption">Caption & Hashtags</label>
+                <textarea class="form-textarea" id="uploadCaption" rows="3" placeholder="Write your reel caption, tags #fyp #reels..."></textarea>
+              </div>
+
+              <!-- Official Instagram Music Query & Volume Slider -->
+              <div style="display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px;">
+                <div class="form-group">
+                  <label class="form-label" for="uploadMusicQuery">Official Audio Query or Direct URL</label>
+                  <input type="text" class="form-input" id="uploadMusicQuery" placeholder="e.g. Starboy or https://www.instagram.com/reels/audio/1711245173277332">
+                  <div class="form-help">Direct Instagram audio link or song search query.</div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="uploadAudioOffset">Start (Sec)</label>
+                  <input type="number" step="0.5" class="form-input" id="uploadAudioOffset" value="0.0" placeholder="0.0">
+                  <div class="form-help">Audio start offset.</div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="uploadMusicVolume">Volume (0-100%)</label>
+                  <input type="number" min="0" max="100" step="1" class="form-input" id="uploadMusicVolume" value="10" placeholder="10">
+                  <div class="form-help">Default 10 (10% volume).</div>
+                </div>
+              </div>
+
+              <!-- Auto First Comment -->
+              <div class="form-group">
+                <label class="form-label" for="uploadFirstComment">Auto First Comment (Optional)</label>
+                <input type="text" class="form-input" id="uploadFirstComment" placeholder="e.g. Extra hashtags or stream links">
+                <div class="form-help">Automatically posted immediately once media is live.</div>
+              </div>
+
+              <!-- Schedule For Later Toggle -->
+              <div style="background: var(--bg-card-inner); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px; margin-top: 10px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <input type="checkbox" id="uploadScheduleToggle" style="width: 17px; height: 17px; cursor: pointer; accent-color: var(--mc-primary);">
+                  <label for="uploadScheduleToggle" style="cursor: pointer; font-size: 0.88rem; font-weight: 600; color: #fff;">
+                    Schedule for Later (Add to Content Planner Queue)
+                  </label>
+                </div>
+                <div id="uploadScheduleFields" style="display: none; margin-top: 12px;">
+                  <label class="form-label" for="uploadScheduleTime">Publish Date & Time (Local)</label>
+                  <input type="datetime-local" class="form-input" id="uploadScheduleTime" style="color-scheme: dark;">
+                </div>
+              </div>
+
+              <div id="uploadFeedbackArea" style="margin: 16px 0; display: none;"></div>
+
+              <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 18px;" id="btnSubmitUpload">
+                <span>Publish Media to Instagram</span>
+              </button>
+            </form>
+          </div>
+
+          <!-- Right Column: Interactive Instagram Mobile Preview Frame (Metricool Style) -->
+          <div>
+            <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; text-align: center;">
+              Live Instagram Reel Preview
+            </div>
+            <div class="mobile-mock-container" id="composerMobilePreview">
+              <div class="mobile-mock-statusbar">
+                <span>9:41</span>
+                <span>5G &bull; 100%</span>
+              </div>
+              <div class="mobile-mock-header">
+                <div class="mock-user-info">
+                  <div class="mock-avatar">IG</div>
+                  <span class="mock-username" id="mockPreviewHandle">@your_account</span>
+                </div>
+                <span style="color: #fff; font-size: 1rem;">&bull;&bull;&bull;</span>
+              </div>
+              <div class="mobile-mock-media" id="mockPreviewMedia">
+                <div class="mock-media-placeholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                  <span>Select media to preview</span>
+                </div>
+              </div>
+              <div class="mobile-mock-actions">
+                <div class="mock-actions-left">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                </div>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+              </div>
+              <div class="mock-audio-pill" id="mockPreviewAudio">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+                <span>Original Audio</span>
+              </div>
+              <div class="mobile-mock-caption-area" id="mockPreviewCaption">
+                Your caption and hashtags will appear here in real-time...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Account Proxy Configuration -->
+  <div class="modal-overlay" id="modalProxySettings">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title" id="proxyModalTitle">Proxy Settings</div>
+        <button class="modal-close-btn" data-close="modalProxySettings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="formAccountProxy">
+          <input type="hidden" id="proxyTargetUsername">
+          <div class="form-group">
+            <label class="form-label" for="proxyUrlInput">Proxy URL String</label>
+            <input type="text" class="form-input" id="proxyUrlInput" placeholder="http://user:pass@host:port">
+            <div class="form-help">Supported: HTTP/HTTPS residential or ISP proxies (Oxylabs, Smartproxy, BrightData).</div>
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 16px;">
+            <button type="submit" class="btn btn-primary" id="btnSaveProxy" style="flex: 1;">Save Proxy</button>
+            <button type="button" class="btn btn-secondary" id="btnClearProxy">Clear Proxy</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 5: Database History Logs -->
+  <div class="modal-overlay" id="modalHistory">
+    <div class="modal-content wide" style="max-width: 960px;">
+      <div class="modal-header">
+        <div class="modal-title">Database: Published Posts & Attached Profiles</div>
+        <button class="modal-close-btn" data-close="modalHistory">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-tabs">
+          <button class="modal-tab-btn active" data-tab="tabDbPosts">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <span>Published Post Links</span>
+          </button>
+          <button class="modal-tab-btn" data-tab="tabDbProfiles">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            <span>Attached Profiles & Proxies</span>
+          </button>
+        </div>
+
+        <div id="tabDbPosts" class="tab-content active">
+          <div class="table-responsive" id="historyTableContainer">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <div id="tabDbProfiles" class="tab-content" style="display: none;">
+          <div class="table-responsive" id="profilesTableContainer">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 6: CSV Importer -->
+  <div class="modal-overlay" id="modalCsvImport">
+    <div class="modal-content wide" style="max-width: 980px;">
+      <div class="modal-header">
+        <div class="modal-title">Bulk Schedule Posts via CSV (Metricool Compatible)</div>
+        <button class="modal-close-btn" data-close="modalCsvImport">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; gap: 10px; margin-bottom: 16px;">
+          <a href="/api/posts/templates/custom" download class="btn btn-secondary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Social Hub Template</span>
+          </a>
+          <a href="/api/posts/templates/metricool" download class="btn btn-secondary btn-sm">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Metricool Template</span>
+          </a>
+        </div>
+
+        <form id="formCsvValidate">
+          <div class="form-group">
+            <label class="form-label" for="csvFileInput">Upload CSV File</label>
+            <input type="file" class="form-input" id="csvFileInput" accept=".csv">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="csvTextInput">Or Paste CSV Content Directly</label>
+            <textarea class="form-textarea" id="csvTextInput" rows="4" placeholder="Date,Time,Text,Media,Audio..."></textarea>
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <button type="submit" class="btn btn-secondary" id="btnValidateCsv">Validate CSV</button>
+            <button type="button" class="btn btn-primary" id="btnExecuteCsvImport" style="display: none;">Execute Import & Queue</button>
+          </div>
+        </form>
+
+        <div id="csvValidationReportArea" style="margin-top: 16px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 7: Add Brand Workspace -->
+  <div class="modal-overlay" id="modalAddBrand">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">Create Brand Workspace</div>
+        <button class="modal-close-btn" data-close="modalAddBrand">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form id="formCreateBrand">
+          <div class="form-group">
+            <label class="form-label" for="brandNameInput">Brand Name</label>
+            <input type="text" class="form-input" id="brandNameInput" placeholder="e.g. Acme Agency or Jay Music" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="brandColorInput">Badge Color</label>
+            <input type="color" class="form-input" id="brandColorInput" value="#00D2B4" style="height: 44px; padding: 4px; cursor: pointer;">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="brandDescInput">Description (Optional)</label>
+            <input type="text" class="form-input" id="brandDescInput" placeholder="Workspace description or campaign notes">
+          </div>
+          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 10px;">Create Workspace</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Modal 9: Scheduled Post Inspector & Details -->
+  <div class="modal-overlay" id="modalPostDetail">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title" id="postDetailTitle">Scheduled Post Details</div>
+        <button class="modal-close-btn" data-close="modalPostDetail">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="postDetailBody">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
