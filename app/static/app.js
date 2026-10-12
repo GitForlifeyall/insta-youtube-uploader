@@ -1411,7 +1411,7 @@ if (globalBrandSelect) {
 // 2. Navigation Tab Switcher & Browser Routing
 function switchTab(tabName, updateHistory = true) {
   if (tabName === 'vault') tabName = 'folders';
-  const validTabs = ['planner', 'analytics', 'folders', 'queue', 'accounts'];
+  const validTabs = ['planner', 'analytics', 'folders', 'queue', 'accounts', 'engagement'];
   if (!validTabs.includes(tabName)) tabName = 'planner';
 
   // Toggle active class on navigation buttons
@@ -1444,6 +1444,7 @@ function switchTab(tabName, updateHistory = true) {
   else if (tabName === 'queue') loadQueuePosts();
   else if (tabName === 'analytics') loadAnalytics();
   else if (tabName === 'accounts') fetchAccounts();
+  else if (tabName === 'engagement') loadEngagementView();
 }
 
 // Attach click listeners to tabs
@@ -2319,7 +2320,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Resolve initial tab from current URL pathname
   let initialTab = window.location.pathname.replace(/^\/+/, '').split('/')[0] || 'planner';
   if (initialTab === 'vault') initialTab = 'folders';
-  if (!['planner', 'analytics', 'folders', 'queue', 'accounts'].includes(initialTab)) {
+  if (!['planner', 'analytics', 'folders', 'queue', 'accounts', 'engagement'].includes(initialTab)) {
     initialTab = 'planner';
   }
 
@@ -2373,4 +2374,434 @@ function initComposerLivePreview() {
     });
   }
 }
+
+// ==============================================================================
+// 11. ENGAGEMENT FARMING SWARM CONTROLLER
+// ==============================================================================
+let engagementRecentPostsCache = [];
+let engagementResolvedPost = null;
+let engagementControlsInitialized = false;
+
+async function loadEngagementView() {
+  await loadRecentPostsDropdown();
+  await renderSwarmAccountsList();
+  initEngagementControls();
+}
+
+async function loadRecentPostsDropdown() {
+  const select = document.getElementById('selectRecentPost');
+  if (!select) return;
+  try {
+    const res = await fetch('/api/engagement/recent-posts');
+    if (!res.ok) throw new Error('Failed to load recent posts');
+    engagementRecentPostsCache = await res.json();
+
+    if (engagementRecentPostsCache.length === 0) {
+      select.innerHTML = '<option value="">-- No published posts in history yet --</option>';
+      return;
+    }
+
+    select.innerHTML = '<option value="">-- Choose from recently published posts --</option>' +
+      engagementRecentPostsCache.map(p => {
+        const title = p.caption ? p.caption.slice(0, 48) + '...' : p.url;
+        return `<option value="${p.url}">[${p.source}] ${p.username}: ${title}</option>`;
+      }).join('');
+  } catch (err) {
+    console.error('Error fetching recent posts for engagement:', err);
+  }
+}
+
+async function renderSwarmAccountsList() {
+  const container = document.getElementById('swarmAccountsList');
+  if (!container) return;
+
+  if (allAccounts.length === 0) {
+    try {
+      const res = await fetch('/accounts', { headers: { 'Accept': 'application/json' } });
+      if (res.ok) allAccounts = await res.json();
+    } catch (e) {}
+  }
+
+  if (allAccounts.length === 0) {
+    container.innerHTML = '<div style="color: var(--text-muted); padding: 20px; text-align: center;">No connected Instagram accounts found.</div>';
+    return;
+  }
+
+  container.innerHTML = allAccounts.map(acc => {
+    const initial = (acc.full_name || acc.username).charAt(0).toUpperCase();
+    const avatarHtml = acc.profile_pic_url
+      ? `<img src="${acc.profile_pic_url}" alt="${acc.username}" class="swarm-account-avatar" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'avatar-fallback\\' style=\\'width:32px;height:32px;font-size:0.8rem;\\'>${initial}</div>'">`
+      : `<div class="avatar-fallback" style="width:32px;height:32px;font-size:0.8rem;">${initial}</div>`;
+
+    const proxyText = acc.proxy ? maskProxy(acc.proxy) : 'Direct IP';
+    const isAuth = acc.is_authenticated;
+
+    return `
+      <label class="swarm-account-item">
+        <div class="swarm-account-left">
+          <input type="checkbox" class="swarm-account-checkbox" value="${acc.username}" ${isAuth ? 'checked' : ''}>
+          ${avatarHtml}
+          <div>
+            <div class="swarm-account-name">@${acc.username}</div>
+            <div class="swarm-account-proxy">
+              <span>🌐</span>
+              <span>${proxyText}</span>
+              ${!isAuth ? '<span style="color:#ef4444; margin-left:4px;">(Offline)</span>' : ''}
+            </div>
+          </div>
+        </div>
+        <span class="session-status-badge ${isAuth ? 'active' : 'expired'}">${isAuth ? 'Ready' : 'Expired'}</span>
+      </label>
+    `;
+  }).join('');
+}
+
+function initEngagementControls() {
+  if (engagementControlsInitialized) return;
+  engagementControlsInitialized = true;
+
+  const selectRecent = document.getElementById('selectRecentPost');
+  const inputUrl = document.getElementById('inputEngagementUrl');
+  const btnResolve = document.getElementById('btnResolvePost');
+  const btnRefreshRecent = document.getElementById('btnRefreshRecentPosts');
+  const btnSelectAll = document.getElementById('btnSelectAllAccounts');
+  const btnDeselectAll = document.getElementById('btnDeselectAllAccounts');
+  const btnLaunch = document.getElementById('btnLaunchSwarm');
+  const delaySlider = document.getElementById('inputSafetyDelay');
+  const delayDisplay = document.getElementById('delayDisplay');
+
+  // Action chips
+  const actionCheckboxes = [
+    { chip: 'chipLike', check: 'checkActionLike' },
+    { chip: 'chipSave', check: 'checkActionSave' },
+    { chip: 'chipComment', check: 'checkActionComment' },
+    { chip: 'chipFollow', check: 'checkActionFollow' },
+    { chip: 'chipRepost', check: 'checkActionRepost' }
+  ];
+
+  actionCheckboxes.forEach(({ chip, check }) => {
+    const chipEl = document.getElementById(chip);
+    const checkEl = document.getElementById(check);
+    if (chipEl && checkEl) {
+      checkEl.addEventListener('change', () => {
+        if (checkEl.checked) chipEl.classList.add('active');
+        else chipEl.classList.remove('active');
+
+        // Toggle visibility of comment rotation box
+        if (check === 'checkActionComment') {
+          const comGroup = document.getElementById('commentsRotationGroup');
+          if (comGroup) comGroup.style.display = checkEl.checked ? 'block' : 'none';
+        }
+        // Toggle visibility of repost caption box
+        if (check === 'checkActionRepost') {
+          const repGroup = document.getElementById('repostCaptionGroup');
+          if (repGroup) repGroup.style.display = checkEl.checked ? 'block' : 'none';
+        }
+      });
+    }
+  });
+
+  if (delaySlider && delayDisplay) {
+    delaySlider.addEventListener('input', () => {
+      delayDisplay.textContent = parseFloat(delaySlider.value).toFixed(1) + 's';
+    });
+  }
+
+  if (btnRefreshRecent) {
+    btnRefreshRecent.addEventListener('click', async () => {
+      await loadRecentPostsDropdown();
+      showToast('Refreshed published posts list');
+    });
+  }
+
+  if (selectRecent) {
+    selectRecent.addEventListener('change', () => {
+      if (selectRecent.value && inputUrl) {
+        inputUrl.value = selectRecent.value;
+        resolvePostUrl(selectRecent.value);
+      }
+    });
+  }
+
+  if (btnResolve) {
+    btnResolve.addEventListener('click', () => {
+      const url = inputUrl ? inputUrl.value.trim() : '';
+      if (!url) {
+        showToast('Please enter an Instagram post or reel URL', 'error');
+        return;
+      }
+      resolvePostUrl(url);
+    });
+  }
+
+  if (btnSelectAll) {
+    btnSelectAll.addEventListener('click', () => {
+      document.querySelectorAll('.swarm-account-checkbox').forEach(cb => cb.checked = true);
+    });
+  }
+
+  if (btnDeselectAll) {
+    btnDeselectAll.addEventListener('click', () => {
+      document.querySelectorAll('.swarm-account-checkbox').forEach(cb => cb.checked = false);
+    });
+  }
+
+  if (btnLaunch) {
+    btnLaunch.addEventListener('click', launchEngagementSwarm);
+  }
+}
+
+async function resolvePostUrl(url) {
+  const previewBox = document.getElementById('targetPostPreview');
+  const btnResolve = document.getElementById('btnResolvePost');
+  if (!previewBox) return;
+
+  previewBox.style.display = 'flex';
+  previewBox.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; padding:10px; color:var(--text-secondary);">
+      <span class="spinner" style="width:20px;height:20px;border-width:2px;"></span>
+      <span>Inspecting post metadata on Instagram...</span>
+    </div>
+  `;
+
+  if (btnResolve) btnResolve.disabled = true;
+
+  try {
+    const res = await fetch('/api/engagement/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_url: url })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not resolve Instagram post');
+
+    engagementResolvedPost = data;
+
+    const thumbHtml = data.thumbnail_url
+      ? `<img src="${data.thumbnail_url}" alt="Post thumbnail" class="preview-thumb">`
+      : `<div class="preview-thumb-placeholder"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg></div>`;
+
+    previewBox.innerHTML = `
+      ${thumbHtml}
+      <div class="preview-info">
+        <div>
+          <div class="preview-author-row">
+            <span class="preview-author-handle">@${data.author_username}</span>
+            <span class="preview-type-badge">${data.is_reel ? 'Reel / Video' : 'Photo Post'}</span>
+          </div>
+          <div class="preview-caption-snippet">${data.caption || '<em>No caption</em>'}</div>
+        </div>
+        <div class="preview-metrics-row">
+          <span>❤️ ${formatNumber(data.like_count)} Likes</span>
+          <span>💬 ${formatNumber(data.comment_count)} Comments</span>
+          <span style="color:#6366f1;">PK: ${data.media_pk}</span>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    engagementResolvedPost = null;
+    previewBox.innerHTML = `
+      <div style="color:var(--accent-red); font-size:0.85rem; padding:8px;">
+        ⚠️ ${err.message}
+      </div>
+    `;
+  } finally {
+    if (btnResolve) btnResolve.disabled = false;
+  }
+}
+
+async function launchEngagementSwarm() {
+  const inputUrl = document.getElementById('inputEngagementUrl');
+  const targetUrl = (inputUrl ? inputUrl.value : '').trim();
+  if (!targetUrl) {
+    showToast('Please enter or select a target Instagram post / reel URL.', 'error');
+    return;
+  }
+
+  // Selected accounts
+  const selectedAccounts = [];
+  document.querySelectorAll('.swarm-account-checkbox:checked').forEach(cb => {
+    selectedAccounts.push(cb.value);
+  });
+
+  if (selectedAccounts.length === 0) {
+    showToast('Please select at least one account to perform engagement.', 'error');
+    return;
+  }
+
+  // Selected actions
+  const actions = [];
+  if (document.getElementById('checkActionLike')?.checked) actions.push('like');
+  if (document.getElementById('checkActionSave')?.checked) actions.push('save');
+  if (document.getElementById('checkActionComment')?.checked) actions.push('comment');
+  if (document.getElementById('checkActionFollow')?.checked) actions.push('follow');
+  if (document.getElementById('checkActionRepost')?.checked) actions.push('repost');
+
+  if (actions.length === 0) {
+    showToast('Please select at least one action (Like, Save, Comment, Follow, or Repost).', 'error');
+    return;
+  }
+
+  // Comments pool
+  const commentsRaw = document.getElementById('textareaComments')?.value || '';
+  const commentTexts = commentsRaw.split('\n').map(c => c.trim()).filter(Boolean);
+
+  // Repost caption
+  const repostCaption = document.getElementById('inputRepostCaption')?.value.trim() || null;
+
+  // Delay
+  const delaySlider = document.getElementById('inputSafetyDelay');
+  const delaySeconds = delaySlider ? parseFloat(delaySlider.value) : 4.0;
+
+  const btnLaunch = document.getElementById('btnLaunchSwarm');
+  const reportSec = document.getElementById('engagementReportSection');
+
+  btnLaunch.disabled = true;
+  btnLaunch.innerHTML = `<span class="spinner" style="width:18px;height:18px;border-width:2.5px;"></span> <span>Running Swarm across ${selectedAccounts.length} accounts...</span>`;
+
+  if (reportSec) {
+    reportSec.style.display = 'block';
+    reportSec.innerHTML = `
+      <div class="report-card" style="text-align: center; padding: 40px 20px;">
+        <div class="spinner" style="width: 32px; height: 32px; border-width: 3px; margin: 0 auto 16px auto;"></div>
+        <h3 style="color: #fff; font-size: 1.1rem; margin-bottom: 8px;">Swarm Execution in Progress</h3>
+        <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 500px; margin: 0 auto;">
+          Executing ${actions.join(', ').toUpperCase()} with proxies and ${delaySeconds}s human pacing...
+        </p>
+      </div>
+    `;
+    reportSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  try {
+    const res = await fetch('/api/engagement/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_url: targetUrl,
+        accounts: selectedAccounts,
+        actions: actions,
+        comment_texts: commentTexts,
+        repost_caption: repostCaption,
+        delay_seconds: delaySeconds
+      })
+    });
+    const report = await res.json();
+    if (!res.ok) throw new Error(report.detail || 'Engagement swarm failed');
+
+    renderEngagementReport(report);
+    showToast(`Swarm completed: ${report.passed_count} passed, ${report.skipped_count} skipped, ${report.failed_count} failed.`);
+  } catch (err) {
+    showToast(`Swarm Error: ${err.message}`, 'error');
+    if (reportSec) {
+      reportSec.innerHTML = `
+        <div class="report-card" style="border-color: rgba(239, 68, 68, 0.4);">
+          <h3 style="color: var(--accent-red); margin-bottom: 8px;">Swarm Execution Encountered Error</h3>
+          <p style="color: var(--text-secondary); font-size: 0.85rem;">${err.message}</p>
+        </div>
+      `;
+    }
+  } finally {
+    btnLaunch.disabled = false;
+    btnLaunch.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+      <span>Launch Engagement Swarm</span>
+    `;
+  }
+}
+
+function renderEngagementReport(report) {
+  const container = document.getElementById('engagementReportSection');
+  if (!container) return;
+
+  const accReports = report.account_reports || [];
+
+  container.innerHTML = `
+    <div class="report-card">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+        <div>
+          <h2 style="font-size: 1.25rem; font-weight: 800; color: #fff; margin-bottom: 4px;">Engagement Swarm Completion Report</h2>
+          <div style="font-size: 0.8rem; color: var(--text-secondary);">
+            Target: <a href="${report.target_url}" target="_blank" style="color: #6366f1; text-decoration: underline;">${report.target_url}</a> &bull; Author: <strong>@${report.author_username}</strong>
+          </div>
+        </div>
+        <div style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">
+          ${new Date(report.completed_at).toLocaleTimeString()}
+        </div>
+      </div>
+
+      <div class="report-summary-bar">
+        <div class="report-kpi passed">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          <span>${report.passed_count} Passed</span>
+        </div>
+        <div class="report-kpi skipped">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+          <span>${report.skipped_count} Skipped (Smart Checks)</span>
+        </div>
+        <div class="report-kpi failed">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          <span>${report.failed_count} Failed</span>
+        </div>
+        <div style="margin-left: auto; font-size: 0.82rem; color: #94a3b8;">
+          Total Participating Accounts: <strong>${report.total_accounts}</strong>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th>Assigned Proxy</th>
+              <th>Actions Breakdown</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${accReports.map(ar => {
+              const actionEntries = Object.entries(ar.actions || {});
+              return `
+                <tr>
+                  <td>
+                    <strong>@${ar.username}</strong>
+                  </td>
+                  <td style="font-family: var(--font-mono); font-size: 0.75rem; color: #94a3b8;">
+                    ${ar.proxy ? maskProxy(ar.proxy) : 'Direct'}
+                  </td>
+                  <td>
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                      ${actionEntries.map(([act, res]) => {
+                        const actName = act.toUpperCase();
+                        let badgeClass = res.status === 'passed' ? 'passed' : (res.status === 'skipped' ? 'skipped' : 'failed');
+                        let detailText = res.message || res.error || '';
+                        if (res.new_url) {
+                          detailText += ` &bull; <a href="${res.new_url}" target="_blank" style="color: #818cf8; text-decoration: underline;">View Reel</a>`;
+                        }
+                        return `
+                          <div style="font-size: 0.77rem; display: flex; align-items: center; gap: 6px;">
+                            <span class="report-pill ${badgeClass}">${actName}</span>
+                            <span style="color: #cbd5e1;">${detailText}</span>
+                          </div>
+                        `;
+                      }).join('')}
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge-status ${ar.overall_status === 'passed' ? 'published' : (ar.overall_status === 'partial' ? 'scheduled' : 'failed')}">
+                      ${ar.overall_status}
+                    </span>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 

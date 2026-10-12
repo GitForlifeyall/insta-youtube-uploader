@@ -16,7 +16,7 @@ except ImportError:
 from app.api import (
     routes_account, routes_music, routes_media,
     routes_brands, routes_posts, routes_folder_publisher,
-    routes_bulk, routes_evergreen, routes_analytics
+    routes_bulk, routes_evergreen, routes_analytics, routes_engagement
 )
 from app.config import (
     APP_TITLE, APP_DESCRIPTION, APP_VERSION, STATIC_DIR,
@@ -81,6 +81,7 @@ app.include_router(routes_folder_publisher.router)
 app.include_router(routes_bulk.router)
 app.include_router(routes_evergreen.router)
 app.include_router(routes_analytics.router)
+app.include_router(routes_engagement.router)
 
 
 @app.get("/", tags=["Dashboard"])
@@ -89,6 +90,7 @@ app.include_router(routes_analytics.router)
 @app.get("/folders", tags=["Dashboard"])
 @app.get("/vault", tags=["Dashboard"])
 @app.get("/queue", tags=["Dashboard"])
+@app.get("/engagement", tags=["Dashboard"])
 def dashboard():
     """Serves the unified Social Hub & Instagram Automation Dashboard."""
     index_file = STATIC_DIR / "index.html"
